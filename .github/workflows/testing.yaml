@@ -4,49 +4,23 @@ on:
 
 env:
   php-version: '8.3'
-  key: php-cache3
+  key: php-cache
 
 jobs:
   phpunit:
     # Configuration
     name: App Test
     runs-on: ubuntu-latest
+    container:
+      image: phpswoole/swoole:php8.3
+      options: --user root
 
     # Steps
     steps:
       - name: Checkout
         uses: actions/checkout@v3
 
-      # PHP Extension
-      - name: Setup Cache PHP Extensions
-        id: extcache
-        uses: shivammathur/cache-extensions@v1
-        with:
-          php-version: ${{ env.php-version }}
-          extensions: :xdebug
-          key: ${{ env.key }}
-      - name: Cache PHP Extensions
-        uses: actions/cache@v2
-        with:
-          path: ${{ steps.extcache.outputs.dir }}
-          key: ${{ steps.extcache.outputs.key }}
-          restore-keys: ${{ steps.extcache.outputs.key }}
-
       # Install PHP
-      - name: Install PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: ${{ env.php-version }}
-          extensions: :xdebug, swoole
-          ini-values: sys_temp_dir=${{ runner.temp }}
-        env:
-          SWOOLE_CONFIGURE_OPTS: --enable-openssl
-      - name: PHP modüllerini listele
-        run: php --ri swoole
-#      - name: Install Swoole Ext With SSL
-#        run: |
-#          sudo pecl install -D 'enable-openssl="yes"' swoole || true
-#          echo "extension=swoole.so" >> $(php --ini | grep "Loaded Configuration" | sed -e "s|.*:\s*||")
       - name: Get Composer Cache Directory
         id: composer-cache
         run: |
