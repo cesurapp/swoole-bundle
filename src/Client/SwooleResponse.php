@@ -52,6 +52,10 @@ readonly class SwooleResponse implements ResponseInterface
 
     public function getInfo(?string $type = null): mixed
     {
+        if ('debug' === $type) {
+            return $this->client->getBody();
+        }
+
         $info = get_object_vars($this->client);
 
         return $info[$type] ?? $info;
