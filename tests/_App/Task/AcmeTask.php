@@ -6,10 +6,8 @@ use Cesurapp\SwooleBundle\Task\TaskInterface;
 
 class AcmeTask implements TaskInterface
 {
-    public function __invoke(string $data): string
+    public function __invoke(mixed $data): void
     {
         echo $data;
-
-        return 'Acme Task';
     }
 }
