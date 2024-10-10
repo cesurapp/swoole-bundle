@@ -28,7 +28,7 @@ swoole:
   entrypoint: public/index.php
   watch_dir: /config,/src,/templates
   watch_extension: '*.php,*.yaml,*.yml,*.twig'
-  replace_http_client: true # Replate Symfony HTTP Client to Swoole Client 
+  replace_http_client: true # Replace Symfony HTTP Client to Swoole Client 
   cron_worker: true # Enable Cron Worker Service
   task_worker: true # Enable Task Worker Service
   task_sync_mode: false # Enable SYNC Mode -> Default false
