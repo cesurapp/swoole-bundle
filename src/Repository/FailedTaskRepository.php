@@ -43,9 +43,9 @@ class FailedTaskRepository extends ServiceEntityRepository
      */
     public function resolveTask(FailedTask $task): void
     {
-        $this->_em->remove($task);
-        $this->_em->flush();
-        $this->_em->detach($task);
+        $this->getEntityManager()->remove($task);
+        $this->getEntityManager()->flush();
+        $this->getEntityManager()->detach($task);
     }
 
     /**
@@ -59,8 +59,8 @@ class FailedTaskRepository extends ServiceEntityRepository
             ->setAttempt($taskRequest['attempt'] ?? 0)
             ->setException($exception->getMessage());
 
-        $this->_em->persist($failedTask);
-        $this->_em->flush();
-        $this->_em->detach($failedTask);
+        $this->getEntityManager()->persist($failedTask);
+        $this->getEntityManager()->flush();
+        $this->getEntityManager()->detach($failedTask);
     }
 }
