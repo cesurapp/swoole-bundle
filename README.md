@@ -27,8 +27,8 @@ __Configuration:__
 swoole:
   entrypoint: public/index.php
   watch_dir: /config,/src,/templates
-  watch_extension: *.php,*.yaml,*.yml,*.twig
-  replace_http_client: true # Replate Symfony HTTP Client to Swoole Client 
+  watch_extension: '*.php,*.yaml,*.yml,*.twig'
+  replace_http_client: true # Replace Symfony HTTP Client to Swoole Client 
   cron_worker: true # Enable Cron Worker Service
   task_worker: true # Enable Task Worker Service
   task_sync_mode: false # Enable SYNC Mode -> Default false
@@ -85,7 +85,7 @@ You can use cron expression for scheduled tasks, or you can use predefined expre
  * '@EveryMinute15'  => '*\/15 * * * *',
  * '@EveryMinute30'  => '*\/30 * * * *',```
  */
-class ExampleJob implements \Cesurapp\SwooleBundle\Cron\AbstractCronJob {
+class ExampleJob extends \Cesurapp\SwooleBundle\Cron\AbstractCronJob {
     /**
      * @see AbstractCronJob
      */
