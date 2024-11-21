@@ -2,6 +2,7 @@
 
 namespace Cesurapp\SwooleBundle\Client;
 
+use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 use Symfony\Contracts\HttpClient\ResponseInterface;
 use Symfony\Contracts\HttpClient\ResponseStreamInterface;
@@ -9,6 +10,10 @@ use Symfony\Contracts\HttpClient\ResponseStreamInterface;
 class SwooleBridge implements HttpClientInterface
 {
     public static ?array $clients = null;
+
+    public function __construct(private readonly EventDispatcherInterface $eventDispatcher)
+    {
+    }
 
     public function request(string $method, string $url, array $options = []): ResponseInterface
     {
@@ -44,6 +49,8 @@ class SwooleBridge implements HttpClientInterface
         if (is_array(self::$clients)) {
             self::$clients[] = $response->getInfo();
         }
+
+        $this->eventDispatcher->dispatch(new ClientResponseEvent($response));
 
         return $response;
     }

@@ -50,6 +50,7 @@ class SwooleBundle extends AbstractBundle
         if ($builder->getParameter('swoole.replace_http_client')) {
             $def = $builder
                 ->register(SwooleBridge::class, SwooleBridge::class)
+                ->setArguments([new Reference('event_dispatcher')])
                 ->setDecoratedService('http_client', invalidBehavior: ContainerInterface::IGNORE_ON_INVALID_REFERENCE);
             if ('test' === $container->env()) {
                 $def->setPublic(true);
