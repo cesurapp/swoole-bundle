@@ -50,7 +50,7 @@ class SwooleBridge implements HttpClientInterface
             self::$clients[] = $response->getInfo();
         }
 
-        $this->eventDispatcher->dispatch(new ClientResponseEvent($response));
+        $this->eventDispatcher->dispatch(new ClientResponseEvent($client->getUri(), $response));
 
         return $response;
     }

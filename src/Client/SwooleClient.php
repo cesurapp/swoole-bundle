@@ -226,6 +226,11 @@ class SwooleClient
         return $this;
     }
 
+    public function getUri(): string
+    {
+        return $this->requestUri;
+    }
+
     /**
      * Execute Request.
      */
