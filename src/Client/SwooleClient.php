@@ -127,9 +127,9 @@ class SwooleClient
             return $this;
         }
 
-        $current = [];
-        parse_str(ltrim($this->requestUri, '?\\/'), $current);
-        $this->requestUri = '/?'.urldecode(http_build_query(array_merge_recursive($current, $query)));
+        $parsed = parse_url($this->requestUri);
+        parse_str($parsed['query'] ?? '', $currentQuery);
+        $this->requestUri = $parsed['path'].'?'.urldecode(http_build_query(array_merge_recursive($currentQuery, $query)));
 
         return $this;
     }
@@ -228,7 +228,7 @@ class SwooleClient
 
     public function getUri(): string
     {
-        return $this->requestUri;
+        return (443 === $this->client->port ? 'https://' : 'http://').$this->client->host.$this->requestUri;
     }
 
     /**
