@@ -202,7 +202,7 @@ class SwooleClient
         return $this;
     }
 
-    public function setProxy(string $host, int $port, string $username, string $password): self
+    public function setProxy(string $host, int $port, ?string $username, ?string $password): self
     {
         $this->client->set([
             'http_proxy_host' => $host,
@@ -214,7 +214,7 @@ class SwooleClient
         return $this;
     }
 
-    public function setSock5Proxy(string $host, int $port, string $username, string $password): self
+    public function setSock5Proxy(string $host, int $port, ?string $username, ?string $password): self
     {
         $this->client->set([
             'socks5_host' => $host,

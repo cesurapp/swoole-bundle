@@ -26,6 +26,19 @@ class SwooleBridge implements HttpClientInterface
         if (isset($options['query'])) {
             $client->setQuery($options['query']);
         }
+        if (isset($options['proxy']) && is_string($options['proxy'])) {
+            $parsed = parse_url($options['proxy']);
+
+            // Socket5
+            if ('socks5' === $parsed['scheme']) {
+                $client->setSock5Proxy($parsed['host'], $parsed['port'], $parsed['user'] ?? null, $parsed['pass'] ?? null);
+            }
+
+            // HTTP
+            if ('http' === $parsed['scheme']) {
+                $client->setProxy($parsed['host'], $parsed['port'], $parsed['user'] ?? null, $parsed['pass'] ?? null);
+            }
+        }
 
         $response = new SwooleResponse($client->execute());
         if (is_array(self::$clients)) {
