@@ -25,5 +25,18 @@ class CronServer
                 sleep(55);
             }
         }, false, 2, true));
+
+        // Timer Cron
+        $server->addProcess(new Process(function (Process $process) use ($application) {
+            $kernel = clone $application;
+            $kernel->boot(); // @phpstan-ignore-line
+            $worker = $kernel->getContainer()->get(CronWorker::class); // @phpstan-ignore-line
+
+            $worker->initTimerCron();
+            while (true) { // @phpstan-ignore-line
+                sleep(5);
+                $worker->runTimer(5);
+            }
+        }, false, 2, true));
     }
 }

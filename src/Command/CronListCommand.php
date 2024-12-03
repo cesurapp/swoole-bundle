@@ -26,8 +26,8 @@ class CronListCommand extends Command
             $output->table(['Cron Services', 'Enable', 'Time', 'Next'], array_map(static fn (AbstractCronJob $cron) => [
                 get_class($cron),
                 $cron->ENABLE ? 'True' : 'False',
-                $cron->TIME,
-                $cron->next->setTimezone(new \DateTimeZone('Europe/Istanbul'))->format('d/m/Y H:i:s'),
+                is_numeric($cron->TIME) ? $cron->TIME.' second' : $cron->TIME,
+                $cron->next ? $cron->next->format('d/m/Y H:i:s') : 'N/A',
             ], [...$this->cronWorker->getAll()]));
         } else {
             $output->warning('Cron job not found!');

@@ -10,6 +10,7 @@ use Symfony\Component\Lock\LockFactory;
 class CronWorker
 {
     private CronExpression $expression;
+    private array $timerCrons = [];
 
     public function __construct(private readonly ServiceLocator $locator, private readonly LoggerInterface $logger, private readonly LockFactory $lockFactory)
     {
@@ -33,25 +34,27 @@ class CronWorker
 
     public function run(): void
     {
-        foreach ($this->getAll() as $cron) {
-            if (!$cron || !$cron->ENABLE || !$cron->isDue) {
+        foreach ($this->locator->getProvidedServices() as $cronClass => $value) {
+            $cron = $this->get($cronClass);
+
+            if (!isset($cron->isDue) || !$cron->ENABLE || !$cron->isDue) {
                 continue;
             }
 
             // Lock
-            $lock = $this->lockFactory->createLock(get_class($cron), 1200);
+            $lock = $this->lockFactory->createLock($cronClass, 1200);
             if (!$lock->acquire()) {
                 continue;
             }
 
-            go(function () use ($cron, $lock) {
+            go(function () use ($cron, $lock, $cronClass) {
                 try {
-                    $this->logger->info('Cron Job Process: '.get_class($cron));
+                    $this->logger->info('Cron Job Process: '.$cronClass);
                     $cron();
-                    $this->logger->info('Cron Job Finish: '.get_class($cron));
+                    $this->logger->info('Cron Job Finish: '.$cronClass);
                 } catch (\Exception $exception) {
                     $this->logger->error(
-                        sprintf('CRON Job Failed: %s, exception: %s', get_class($cron), $exception->getMessage())
+                        sprintf('Cron Job Failed: %s, exception: %s', $cronClass, $exception->getMessage())
                     );
                 } finally {
                     $lock->release();
@@ -68,6 +71,10 @@ class CronWorker
         if ($this->locator->has($class)) {
             /** @var AbstractCronJob $cron */
             $cron = $this->locator->get($class);
+            if (is_numeric($cron->TIME)) {
+                return $cron;
+            }
+
             $aliases = CronExpression::getAliases();
             $this->expression->setExpression($aliases[strtolower($cron->TIME)] ?? $cron->TIME);
             $cron->isDue = $this->expression->isDue();
@@ -79,12 +86,57 @@ class CronWorker
         return null;
     }
 
-    public function getAll(): \Traversable
+    public function getAll(bool $onlyExpression = false): \Traversable
     {
-        foreach ($this->locator->getProvidedServices() as $cron => $value) {
-            yield $this->get($cron);
+        foreach ($this->locator->getProvidedServices() as $cronClass => $value) {
+            yield $this->get($cronClass);
         }
 
         return null;
+    }
+
+    public function runTimer(int $interval): void
+    {
+        foreach ($this->timerCrons as $cronClass => $time) {
+            $this->timerCrons[$cronClass] = $time - $interval;
+            if ($this->timerCrons[$cronClass] <= 0) {
+                $cron = $this->get($cronClass);
+
+                // Reset Timer
+                $this->timerCrons[$cronClass] = (int) $cron->TIME;
+
+                // Lock
+                $lock = $this->lockFactory->createLock($cronClass, 1200);
+                if (!$lock->acquire()) {
+                    continue;
+                }
+
+                go(function () use ($cron, $lock, $cronClass) {
+                    try {
+                        $this->logger->info('Cron Job Process: '.$cronClass);
+                        $cron();
+                        $this->logger->info('Cron Job Finish: '.$cronClass);
+                    } catch (\Exception $exception) {
+                        $this->logger->error(
+                            sprintf('Cron Job Failed: %s, exception: %s', $cronClass, $exception->getMessage())
+                        );
+                    } finally {
+                        $lock->release();
+                    }
+                });
+            }
+        }
+    }
+
+    public function initTimerCron(): bool
+    {
+        foreach ($this->locator->getProvidedServices() as $cronClass => $value) {
+            $cron = $this->locator->get($cronClass);
+            if (is_numeric($cron->TIME) && $cron->ENABLE) {
+                $this->timerCrons[$cronClass] = (int) $cron->TIME;
+            }
+        }
+
+        return count($this->timerCrons) > 0;
     }
 }

@@ -19,10 +19,10 @@ class CronDataCollector extends DataCollector implements TemplateAwareDataCollec
         $this->data['count'] = count($crons);
         $this->data['crons'] = array_map(static fn ($cron) => [
             'class' => explode('Ghost', explode('\\', get_class($cron))[1] ?? '')[0] ?? '',
-            'time' => $cron->TIME,
+            'time' => is_numeric($cron->TIME) ? $cron->TIME.' second' : $cron->TIME,
             'enable' => $cron->ENABLE,
-            'isDue' => $cron->isDue,
-            'next' => $cron->next->format('Y-m-d H:i:s'),
+            'isDue' => $cron->isDue ?? true,
+            'next' => $cron->next ? $cron->next->format('Y-m-d H:i:s') : 'N/A',
         ], $crons);
     }
 
