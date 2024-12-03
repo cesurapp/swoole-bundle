@@ -7,7 +7,6 @@ use Cesurapp\SwooleBundle\Client\SwooleBridge;
 use Cesurapp\SwooleBundle\Cron\CronDataCollector;
 use Cesurapp\SwooleBundle\Cron\CronInterface;
 use Cesurapp\SwooleBundle\Cron\CronWorker;
-use Cesurapp\SwooleBundle\Task\FailedTaskCron;
 use Cesurapp\SwooleBundle\Task\TaskHandler;
 use Cesurapp\SwooleBundle\Task\TaskInterface;
 use Cesurapp\SwooleBundle\Task\TaskWorker;
@@ -78,7 +77,7 @@ class SwooleBundle extends AbstractBundle
             $services->load('Cesurapp\\SwooleBundle\\Entity\\', './Entity');
 
             // Failed Task Cron
-            $builder->register(FailedTaskCron::class, FailedTaskCron::class);
+            $services->load('Cesurapp\\SwooleBundle\\Task\\', './Task/*Cron.php');
         }
 
         // Register Cron Service
