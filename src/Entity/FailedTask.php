@@ -19,7 +19,7 @@ class FailedTask
     #[ORM\Column(type: 'string')]
     private string $task;
 
-    #[ORM\Column(type: 'json', nullable: true)]
+    #[ORM\Column(type: 'text', nullable: true)]
     private ?string $payload;
 
     #[ORM\Column(type: 'text')]
