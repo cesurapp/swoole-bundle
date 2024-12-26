@@ -146,7 +146,8 @@ class SwooleClient
         if (is_array($data)) {
             foreach ($data as $name => $value) {
                 if (is_resource($value)) {
-                    $this->client->addFile(stream_get_meta_data($value)['uri'], $name);
+                    $fileName = $data[$name.'_filename'] ?? null;
+                    $this->client->addFile(stream_get_meta_data($value)['uri'], $name, null, $fileName);
                     unset($data[$name]);
                 }
             }
