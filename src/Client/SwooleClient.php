@@ -143,6 +143,15 @@ class SwooleClient
 
     public function setData(string|array $data): self
     {
+        if (is_array($data)) {
+            foreach ($data as $name => $value) {
+                if (is_resource($value)) {
+                    $this->client->addFile(stream_get_meta_data($value)['uri'], $name);
+                    unset($data[$name]);
+                }
+            }
+        }
+
         $this->client->setData($data);
 
         return $this;
