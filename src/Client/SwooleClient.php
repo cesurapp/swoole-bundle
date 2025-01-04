@@ -238,7 +238,9 @@ class SwooleClient
 
     public function getUri(): string
     {
-        return (443 === $this->client->port ? 'https://' : 'http://').$this->client->host.$this->requestUri;
+        $port = in_array($this->client->port, [80, 443], true) ? '' : ':'.$this->client->port;
+
+        return ($this->client->ssl ? 'https://' : 'http://').$this->client->host.$port.$this->requestUri;
     }
 
     /**

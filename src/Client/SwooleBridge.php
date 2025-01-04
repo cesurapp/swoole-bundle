@@ -44,6 +44,9 @@ class SwooleBridge implements HttpClientInterface
                 $client->setProxy($parsed['host'], $parsed['port'], $parsed['user'] ?? null, $parsed['pass'] ?? null);
             }
         }
+        if (isset($options['auth_bearer'])) {
+            $client->setHeaders(['Authorization' => 'Bearer '.$options['auth_bearer']]);
+        }
 
         $response = new SwooleResponse($client->execute());
         if (is_array(self::$clients)) {
