@@ -34,6 +34,7 @@ class SwooleBundle extends AbstractBundle
             ->booleanNode('task_sync_mode')->defaultFalse()->end()
             ->scalarNode('failed_task_retry')->defaultValue('@EveryMinute10')->end()
             ->scalarNode('failed_task_attempt')->defaultValue(1)->end()
+            ->scalarNode('websocket_handler')->defaultNull()->end()
             ->end();
     }
 
@@ -91,6 +92,11 @@ class SwooleBundle extends AbstractBundle
             }
 
             $services->load('Cesurapp\\SwooleBundle\\Command\\', './Command/Cron*.*');
+        }
+
+        // Register WebHook Handler
+        if ($class = $builder->getParameter('swoole.websocket_handler')) {
+            $services->set($class)->alias('websocket_handler', $class)->public();
         }
     }
 
