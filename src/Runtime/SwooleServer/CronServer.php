@@ -14,7 +14,7 @@ class CronServer
             return;
         }
 
-        $server->addProcess(new Process(function () use ($application) {
+        $server->server->addProcess(new Process(function () use ($application) {
             $kernel = clone $application;
             $kernel->boot(); // @phpstan-ignore-line
             $worker = $kernel->getContainer()->get(CronWorker::class); // @phpstan-ignore-line
@@ -27,7 +27,7 @@ class CronServer
         }, false, 2, true));
 
         // Timer Cron
-        $server->addProcess(new Process(function (Process $process) use ($application) {
+        $server->server->addProcess(new Process(function (Process $process) use ($application) {
             $kernel = clone $application;
             $kernel->boot(); // @phpstan-ignore-line
             $worker = $kernel->getContainer()->get(CronWorker::class); // @phpstan-ignore-line

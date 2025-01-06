@@ -4,6 +4,7 @@ namespace Cesurapp\SwooleBundle\Runtime\SwooleServer;
 
 use Swoole\Http\Request;
 use Swoole\Http\Response;
+use Swoole\WebSocket\Server as WebSocketServer;
 use Swoole\Http\Server;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\HeaderBag;
@@ -13,23 +14,32 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\HttpKernelInterface;
 use Symfony\Component\HttpKernel\TerminableInterface;
 
-class HttpServer extends Server
+class HttpServer
 {
+    use SocketServer;
+    public WebSocketServer|Server $server;
+
     public function __construct(private readonly HttpKernelInterface $application, private readonly array $options)
     {
-        parent::__construct(
+        $class = $this->options['http']['socket'] ? WebSocketServer::class : Server::class;
+        $this->server = new $class(
             $this->options['http']['host'],
             (int) $this->options['http']['port'],
             (int) $this->options['http']['mode'],
             (int) $this->options['http']['sock_type']
         );
-        $this->set($this->options['http']['settings']);
+        $this->server->set($this->options['http']['settings']);
 
         // Manager Start
-        $this->on('request', [$this, 'onRequest']);
-        $this->on('managerstart', [$this, 'onStart']);
+        $this->server->on('request', [$this, 'onRequest']);
+        $this->server->on('managerstart', [$this, 'onStart']);
 
-        $GLOBALS['httpServer'] = $this;
+        // Init Socket Handler
+        if ($this->server instanceof WebSocketServer) {
+            $this->initWebSocket($this->application, $this->server);
+        }
+
+        $GLOBALS['httpServer'] = $this->server;
     }
 
     /**
@@ -94,7 +104,7 @@ class HttpServer extends Server
     /**
      * Handle Server Start Event.
      */
-    public function onStart(HttpServer $server): void
+    public function onStart(Server|WebSocketServer $server): void
     {
         // Server Information
         $watch = $this->options['worker']['watch'] ?? 1;
@@ -103,6 +113,7 @@ class HttpServer extends Server
             echo '------------------------------'.PHP_EOL;
             echo 'Host         => '.$this->options['http']['host'].':'.$this->options['http']['port'].PHP_EOL;
             echo 'Tcp Host     => 127.0.0.1:9502'.PHP_EOL;
+            echo 'Web Socket   => '.($this->options['http']['socket'] ? 'True' : 'False').PHP_EOL;
             echo 'Http Worker  => True'.sprintf(' (%s Worker)', $this->options['http']['settings']['worker_num']).PHP_EOL;
             echo 'Task Worker  => '.($this->options['worker']['task'] ? 'True' : 'False').sprintf(' (%s Worker)', $this->options['http']['settings']['task_worker_num']).PHP_EOL;
             echo 'Cron Worker  => '.($this->options['worker']['cron'] ? 'True' : 'False').PHP_EOL;

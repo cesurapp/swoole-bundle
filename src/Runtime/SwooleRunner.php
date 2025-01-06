@@ -21,6 +21,7 @@ class SwooleRunner implements RunnerInterface
             'port' => 80,
             'mode' => SWOOLE_PROCESS,
             'sock_type' => SWOOLE_SOCK_TCP,
+            'socket' => false,
             'settings' => [
                 'worker_num' => 8,
                 'task_worker_num' => 8,
@@ -105,6 +106,6 @@ class SwooleRunner implements RunnerInterface
         new CronServer($this->application, $httpServer, self::$config);
         new TcpServer($httpServer, self::$config);
 
-        return (int) $httpServer->start();
+        return (int) $httpServer->server->start();
     }
 }

@@ -2,11 +2,14 @@
 
 namespace Cesurapp\SwooleBundle\Runtime\SwooleServer;
 
+use Swoole\Http\Server;
+use Swoole\WebSocket\Server as WebSocketServer;
+
 readonly class TcpServer
 {
     public function __construct(HttpServer $server, private array $options)
     {
-        $tcpServer = $server->addlistener('127.0.0.1', 9502, SWOOLE_SOCK_TCP);
+        $tcpServer = $server->server->addlistener('127.0.0.1', 9502, SWOOLE_SOCK_TCP);
         $tcpServer->set(['worker_num' => 1]);
         $tcpServer->on('receive', [$this, 'onReceive']);
     }
@@ -14,7 +17,7 @@ readonly class TcpServer
     /**
      * Handle TCP Request.
      */
-    public function onReceive(HttpServer $server, int $fd, int $fromId, string $command): void
+    public function onReceive(Server|WebSocketServer $server, int $fd, int $fromId, string $command): void
     {
         $cmd = explode('::', $command);
         $server->send($fd, match ($cmd[0]) {
@@ -28,7 +31,7 @@ readonly class TcpServer
     /**
      * Command Shutdown.
      */
-    private function cmdShutdown(HttpServer $server): int
+    private function cmdShutdown(Server|WebSocketServer $server): int
     {
         $server->shutdown();
 
@@ -38,7 +41,7 @@ readonly class TcpServer
     /**
      * Command Reload Tasks.
      */
-    private function cmdTaskRetry(HttpServer $server, string $cmd): int
+    private function cmdTaskRetry(Server|WebSocketServer $server, string $cmd): int
     {
         $server->task(json_decode($cmd, true, 512, JSON_THROW_ON_ERROR));
 
@@ -48,7 +51,7 @@ readonly class TcpServer
     /**
      * Command View Server Metrics.
      */
-    private function cmdMetrics(HttpServer $server): string
+    private function cmdMetrics(Server|WebSocketServer $server): string
     {
         $options = $this->options;
 
