@@ -32,6 +32,9 @@ class SwooleRunner implements RunnerInterface
                 'task_max_request' => 0,
                 'package_max_length' => 15 * 1024 * 1024,
                 'http_compression' => true,
+                'max_request' => 10000,
+                'heartbeat_check_interval' => 60,
+                'heartbeat_idle_time' => 180,
             ],
         ],
     ];

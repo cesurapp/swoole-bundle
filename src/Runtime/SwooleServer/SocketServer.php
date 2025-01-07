@@ -5,20 +5,17 @@ namespace Cesurapp\SwooleBundle\Runtime\SwooleServer;
 use Swoole\WebSocket\Server;
 use Symfony\Component\HttpKernel\HttpKernelInterface;
 
-trait SocketServer
+class SocketServer extends Server
 {
-    public function initWebSocket(HttpKernelInterface $application, Server $server): void
+    public ?string $client_id = null;
+
+    public function initHandler(HttpKernelInterface $application): void
     {
         // WebSocket Handler
         $kernel = clone $application;
         $kernel->boot(); // @phpstan-ignore-line
         $container = $kernel->getContainer(); // @phpstan-ignore-line
         $handler = $container->get('websocket_handler');
-
-        // Register Events
-        $server->on('start', [$handler, 'onStart']);
-        $server->on('open', [$handler, 'onOpen']);
-        $server->on('message', [$handler, 'onMessage']);
-        $server->on('close', [$handler, 'onClose']);
+        $handler->initServerEvents($this);
     }
 }

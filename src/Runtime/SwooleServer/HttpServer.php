@@ -4,7 +4,6 @@ namespace Cesurapp\SwooleBundle\Runtime\SwooleServer;
 
 use Swoole\Http\Request;
 use Swoole\Http\Response;
-use Swoole\WebSocket\Server as WebSocketServer;
 use Swoole\Http\Server;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\HeaderBag;
@@ -16,12 +15,11 @@ use Symfony\Component\HttpKernel\TerminableInterface;
 
 class HttpServer
 {
-    use SocketServer;
-    public WebSocketServer|Server $server;
+    public SocketServer|Server $server;
 
     public function __construct(private readonly HttpKernelInterface $application, private readonly array $options)
     {
-        $class = $this->options['http']['socket'] ? WebSocketServer::class : Server::class;
+        $class = $this->options['http']['socket'] ? SocketServer::class : Server::class;
         $this->server = new $class(
             $this->options['http']['host'],
             (int) $this->options['http']['port'],
@@ -35,8 +33,8 @@ class HttpServer
         $this->server->on('managerstart', [$this, 'onStart']);
 
         // Init Socket Handler
-        if ($this->server instanceof WebSocketServer) {
-            $this->initWebSocket($this->application, $this->server);
+        if ($this->server instanceof SocketServer) {
+            $this->server->initHandler($this->application);
         }
 
         $GLOBALS['httpServer'] = $this->server;
@@ -104,7 +102,7 @@ class HttpServer
     /**
      * Handle Server Start Event.
      */
-    public function onStart(Server|WebSocketServer $server): void
+    public function onStart(Server|SocketServer $server): void
     {
         // Server Information
         $watch = $this->options['worker']['watch'] ?? 1;
