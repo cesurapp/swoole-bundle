@@ -76,7 +76,7 @@ class HttpServer
         // Set Header
         $response->status($sfResponse->getStatusCode());
         foreach ($sfResponse->headers->all() as $name => $values) {
-            $response->header($name, !is_array($values) ? (string) $values : implode(',', $values));
+            $response->header($name, !is_array($values) ? (string) $values : implode(',', $values)); // @phpstan-ignore-line
         }
 
         switch (true) {
