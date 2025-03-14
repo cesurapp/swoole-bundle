@@ -42,7 +42,7 @@ class TaskFailedViewCommand extends Command
 
             $table
                 ->setRows(array_map(static fn (FailedTask $task) => [
-                    $task->getId()?->toBase32(),
+                    $task->getId()->toString(),
                     $task->getTask(),
                     $task->getException(),
                     json_encode($task->getPayload(), JSON_THROW_ON_ERROR),

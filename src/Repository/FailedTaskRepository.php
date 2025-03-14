@@ -6,6 +6,7 @@ use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\ORM\QueryBuilder;
 use Doctrine\Persistence\ManagerRegistry;
 use Cesurapp\SwooleBundle\Entity\FailedTask;
+use Symfony\Bridge\Doctrine\Types\UuidType;
 
 /**
  * @method FailedTask|null find($id, $lockMode = null, $lockVersion = null)
@@ -32,7 +33,7 @@ class FailedTaskRepository extends ServiceEntityRepository
             ->setMaxResults($limit);
 
         if ($nextTask) {
-            $query->andWhere('q.id < :next')->setParameter('next', $nextTask->getId(), 'ulid');
+            $query->andWhere('q.id < :next')->setParameter('next', $nextTask->getId(), UuidType::NAME);
         }
 
         return $query;
