@@ -110,7 +110,7 @@ class HttpServer
             echo 'Swoole Server Information'.PHP_EOL;
             echo '------------------------------'.PHP_EOL;
             echo 'Host         => '.$this->options['http']['host'].':'.$this->options['http']['port'].PHP_EOL;
-            echo 'Tcp Host     => 127.0.0.1:9502'.PHP_EOL;
+            echo 'Tcp Host     => 127.0.0.1:'.$this->options['tcp']['port'].PHP_EOL;
             echo 'Web Socket   => '.($this->options['http']['socket'] ? 'True' : 'False').PHP_EOL;
             echo 'Http Worker  => True'.sprintf(' (%s Worker)', $this->options['http']['settings']['worker_num']).PHP_EOL;
             echo 'Task Worker  => '.($this->options['worker']['task'] ? 'True' : 'False').sprintf(' (%s Worker)', $this->options['http']['settings']['task_worker_num']).PHP_EOL;

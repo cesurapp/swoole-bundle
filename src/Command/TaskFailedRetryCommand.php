@@ -28,7 +28,7 @@ class TaskFailedRetryCommand extends Command
 
         // Connect Swoole TCP Server
         try {
-            $client->connect('0.0.0.0', 9502, 1.5);
+            $client->connect('0.0.0.0', $_ENV['SERVER_TCP_PORT'], 1.5);
             if (!$client->isConnected()) {
                 $io->error('Client not connected!');
             }

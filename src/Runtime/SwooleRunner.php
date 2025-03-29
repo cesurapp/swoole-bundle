@@ -16,6 +16,9 @@ class SwooleRunner implements RunnerInterface
             'cron' => 1,
             'task' => 1,
         ],
+        'tcp' => [
+            'port' => 9502,
+        ],
         'http' => [
             'host' => '0.0.0.0',
             'port' => 80,
