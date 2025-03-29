@@ -83,7 +83,8 @@ class SwooleRunner implements RunnerInterface
     {
         $opts = array_merge_recursive(
             array_filter($_ENV, static fn ($k) => str_starts_with($k, 'SERVER_WORKER'), ARRAY_FILTER_USE_KEY),
-            array_filter($_ENV, static fn ($k) => str_starts_with($k, 'SERVER_HTTP'), ARRAY_FILTER_USE_KEY)
+            array_filter($_ENV, static fn ($k) => str_starts_with($k, 'SERVER_HTTP'), ARRAY_FILTER_USE_KEY),
+            array_filter($_ENV, static fn ($k) => str_starts_with($k, 'SERVER_TCP'), ARRAY_FILTER_USE_KEY)
         );
 
         $parseType = static function (mixed $type) {
