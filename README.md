@@ -106,12 +106,12 @@ class ExampleJob extends \Cesurapp\SwooleBundle\Cron\AbstractCronJob {
 ```
 
 ### Create Task (Background Job or Queue)
-Data passed to jobs must be of type string, int, bool, array, objects cannot be serialized.
+Data passed to jobs must be any serialized data.
 
 Create:
 ```php
 class ExampleTask implements \Cesurapp\SwooleBundle\Task\TaskInterface {
-    public function __invoke(object|string $data = null): void {
+    public function __invoke(mixed $data): void {
         var_dump(
             $data['name'],
             $data['invoke']
@@ -120,7 +120,7 @@ class ExampleTask implements \Cesurapp\SwooleBundle\Task\TaskInterface {
 }
 ```
 
-Handle Task:
+Dispatch Task:
 ```php
 public function hello(\Cesurapp\SwooleBundle\Task\TaskHandler $taskHandler) {
     $taskHandler->dispatch(ExampleTask::class, [

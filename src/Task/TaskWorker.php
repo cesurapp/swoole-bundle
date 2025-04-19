@@ -16,7 +16,7 @@ class TaskWorker
     {
         try {
             $task = $this->getTask($taskRequest);
-            $task(unserialize($taskRequest['payload']));
+            $task(unserialize($taskRequest['payload'], ['allowed_classes' => true]));
 
             $this->logger->info('Success Task: '.$taskRequest['class'], $taskRequest);
         } catch (\Exception $exception) {
