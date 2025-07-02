@@ -41,7 +41,7 @@ class ServerCommandTest extends KernelTestCase
         $cmd = $application->find('server:stop');
         $cmdTester = new CommandTester($cmd);
         $cmdTester->execute([]);
-        $this->assertStringContainsString('Swoole HTTP Server is Stopped', $cmdTester->getDisplay());
+        $this->assertStringContainsString('Swoole HTTP Server is Stopped!', $cmdTester->getDisplay());
         sleep(1);
     }
 }
