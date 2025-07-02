@@ -1,26 +1,20 @@
 <?xml version="1.0"?>
-<phpunit
-        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        bootstrap="vendor/autoload.php"
-        colors="true"
-        beStrictAboutOutputDuringTests="true"
-        beStrictAboutChangesToGlobalState="true"
-        xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/9.3/phpunit.xsd"
-        cacheResultFile="var/.phpunit.result.cache"
->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" bootstrap="vendor/autoload.php" colors="true"
+         beStrictAboutOutputDuringTests="true" beStrictAboutChangesToGlobalState="true"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/12.2/phpunit.xsd">
     <php>
         <server name="KERNEL_CLASS" value="Cesurapp\SwooleBundle\Tests\Kernel"/>
     </php>
-
-    <coverage includeUncoveredFiles="false">
-        <include>
-            <directory suffix=".php">src</directory>
-        </include>
-    </coverage>
 
     <testsuites>
         <testsuite name="Tests">
             <directory>./tests</directory>
         </testsuite>
     </testsuites>
+    
+    <source>
+        <include>
+            <directory suffix=".php">src</directory>
+        </include>
+    </source>
 </phpunit>
