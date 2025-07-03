@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: phpswoole/swoole:php8.4
-      #options: --user root
+      options: --user root
 
     # Steps
     steps:
@@ -38,5 +38,9 @@ jobs:
         run: composer qa:lint
       - name: PhpStan
         run: composer qa:phpstan
+      - name: Log Directory
+        run: |
+          mkdir -p var/log
+          chmod -R 777 var
       - name: Execute PHPUnit
         run: composer test:stop
