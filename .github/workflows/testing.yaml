@@ -3,7 +3,6 @@ on:
   push:
 
 env:
-  php-version: '8.4'
   key: php-cache
 
 jobs:
@@ -12,7 +11,7 @@ jobs:
     name: App Test
     runs-on: ubuntu-latest
     container:
-      image: phpswoole/swoole:php8.4
+      image: phpswoole/swoole:php8.3
       options: --user root
 
     # Steps
