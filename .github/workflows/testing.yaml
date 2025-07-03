@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: phpswoole/swoole:php8.3
-      options: --user root
+      #options: --user root
 
     # Steps
     steps:
