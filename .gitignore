@@ -1,5 +1,4 @@
 ###> composer/general ###
-composer.lock
 /vendor
 ###< composer/general ###
 
