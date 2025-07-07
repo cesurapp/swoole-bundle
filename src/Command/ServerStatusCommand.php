@@ -31,7 +31,7 @@ class ServerStatusCommand extends Command
         while (true) {
             try {
                 if (!$client->isConnected()) {
-                    @$client->connect('127.0.0.1', $_ENV['SERVER_TCP_PORT'], 1.5);
+                    @$client->connect('127.0.0.1', (int) ($_ENV['SERVER_TCP_PORT'] ?? 9502), 1.5);
                 } else {
                     $client->send('getMetrics');
                     $data = json_decode($client->recv(), true, 512, JSON_THROW_ON_ERROR);
@@ -43,7 +43,7 @@ class ServerStatusCommand extends Command
                     $table->setRows([
                         ['Environment', $data['server']['env']],
                         ['Host', $data['server']['http']['host'].':'.$data['server']['http']['port']],
-                        ['TCP Host', '127.0.0.1'.$_ENV['SERVER_TCP_PORT']],
+                        ['TCP Host', '127.0.0.1:'.($_ENV['SERVER_TCP_PORT'] ?? '9502')],
                         ['Cron Worker', $data['server']['worker']['cron'] ? 'True' : 'False'],
                         ['Task Worker', $data['server']['worker']['task'] ? 'True' : 'False'],
 

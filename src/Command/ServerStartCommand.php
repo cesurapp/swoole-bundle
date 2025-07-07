@@ -28,7 +28,7 @@ class ServerStartCommand extends Command
     {
         $output = new SymfonyStyle($input, $output);
         $server = new SwooleProcess($output, $this->bag->get('kernel.project_dir'), $this->bag->get('swoole.entrypoint'));
-        $server->start(PHP_BINARY, $input->getOption('detach'));
+        $server->start(PHP_BINARY, in_array($input->getOption('detach'), [null, true], true));
         sleep(1);
 
         return Command::SUCCESS;

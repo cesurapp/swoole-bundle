@@ -37,7 +37,7 @@ class ServerCommandTest extends KernelTestCase
         $cmdTester->execute(['--detach' => true]);
 
         // Stop
-        sleep(1);
+        sleep(2);
         $cmd = $application->find('server:stop');
         $cmdTester = new CommandTester($cmd);
         $cmdTester->execute([]);

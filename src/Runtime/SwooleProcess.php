@@ -52,6 +52,10 @@ class SwooleProcess
      */
     public function watch(array $watchDir, array $watchExt): void
     {
+        pcntl_async_signals(true);
+        pcntl_signal(SIGHUP, fn () => posix_kill(posix_getpid(), SIGINT));
+        pcntl_signal(SIGTSTP, fn () => posix_kill(posix_getpid(), SIGINT));
+
         // Check fsWatch Plugin
         if (!$fsWatch = (new ExecutableFinder())->find('fswatch')) {
             $this->output->error('fswatch plugin not found!');
@@ -62,13 +66,19 @@ class SwooleProcess
         // Start File Watcher
         $paths = [...array_map(fn ($path) => $this->rootDir.$path, $watchDir)];
         $watcher = new SymfonyProcess([$fsWatch, ...$watchExt, '-r', '-e', '.*~', ...$paths], null, null, null, 0);
+        $watcher->setIgnoredSignals([SIGHUP, SIGTSTP]);
         $watcher->start();
 
         // App Server
         $server = new SymfonyProcess([(new PhpExecutableFinder())->find(), $this->rootDir.$this->entrypoint], null, null, null, 0);
-        $server->setTty(true)->start();
+        $server->setTty(true)->setIgnoredSignals([SIGHUP, SIGTSTP]);
+        $server->start();
 
-        while (true) { // @phpstan-ignore-line
+        while (true) {
+            if (!$server->isRunning()) {
+                break;
+            }
+
             if ($output = $watcher->getIncrementalOutput()) {
                 $this->output->write('Changed -> '.str_replace($this->rootDir, '', $output));
                 if (1 === $server->stop()) {
