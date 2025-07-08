@@ -81,10 +81,19 @@ class SwooleProcess
 
             if ($output = $watcher->getIncrementalOutput()) {
                 $this->output->write('Changed -> '.str_replace($this->rootDir, '', $output));
-                if (1 === $server->stop()) {
-                    $server->start(null, ['watch' => random_int(100, 200)]);
+
+                if (1 !== $server->stop(0, SIGTERM)) {
+                    $server->stop(0, SIGKILL);
                 }
+
+                usleep(200 * 1000);
+                $server->start(null, ['watch' => random_int(100, 200)]);
             }
+
+            if ($error = $watcher->getIncrementalErrorOutput()) {
+                $this->output->writeln('<error>'.$error.'</error>');
+            }
+
             usleep(100 * 1000);
         }
     }
