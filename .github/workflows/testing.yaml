@@ -21,9 +21,7 @@ jobs:
 
       - name: Install PHP Extensions
         run: |
-          apt-get update
-          apt-get install -y php8.4-posix php8.4-pcntl
-          docker-php-ext-enable posix pcntl
+          docker-php-ext-install posix pcntl
 
       # Install PHP
       - name: Get Composer Cache Directory
