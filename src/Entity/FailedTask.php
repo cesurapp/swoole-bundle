@@ -5,14 +5,14 @@ namespace Cesurapp\SwooleBundle\Entity;
 use Doctrine\ORM\Mapping as ORM;
 use Cesurapp\SwooleBundle\Repository\FailedTaskRepository;
 use Symfony\Bridge\Doctrine\Types\UuidType;
-use Symfony\Component\Uid\Uuid;
+use Symfony\Component\Uid\UuidV7;
 
 #[ORM\Entity(repositoryClass: FailedTaskRepository::class)]
 class FailedTask
 {
     #[ORM\Id]
     #[ORM\Column(type: UuidType::NAME, unique: true)]
-    private Uuid $id;
+    private UuidV7 $id;
 
     #[ORM\Column(type: 'string')]
     private string $task;
@@ -31,11 +31,11 @@ class FailedTask
 
     public function __construct()
     {
-        $this->id = Uuid::v7();
+        $this->id = UuidV7::v7();
         $this->createdAt = new \DateTime();
     }
 
-    public function getId(): Uuid
+    public function getId(): UuidV7
     {
         return $this->id;
     }
