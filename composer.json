@@ -32,7 +32,8 @@
         "php-cs-fixer/shim": "^v3.91.3",
         "phpstan/phpstan": "^2.1.0",
         "doctrine/orm": "^3.3.0",
-        "doctrine/doctrine-bundle": "^3.1.0"
+        "doctrine/doctrine-bundle": "^3.1.0",
+        "phpunit/phpunit": "^12.5"
     },
     "autoload": {
         "psr-4": {
