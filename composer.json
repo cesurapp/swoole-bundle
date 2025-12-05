@@ -12,28 +12,28 @@
         }
     ],
     "require": {
-        "php": ">=8.3",
+        "php": ">=8.4",
         "ext-posix": "*",
         "ext-pcntl": "*",
         "ext-swoole": "*",
-        "symfony/dependency-injection": "^7.1",
-        "symfony/http-kernel": "^7.1",
-        "symfony/framework-bundle": "^7.1",
-        "symfony/runtime": "^7.1",
-        "symfony/console": "^7.1",
+        "symfony/dependency-injection": "^8.0",
+        "symfony/http-kernel": "^8.0",
+        "symfony/framework-bundle": "^8.0",
+        "symfony/runtime": "^8.0",
+        "symfony/console": "^8.0",
         "dragonmantank/cron-expression": "^3.3",
-        "symfony/lock": "^7.1",
-        "symfony/dotenv": "^7.1",
+        "symfony/lock": "^8.0",
+        "symfony/dotenv": "^8.0",
         "symfony/http-client-contracts": "^3.5"
     },
     "require-dev": {
-        "symfony/test-pack": "^1.1",
-        "symfony/process": "^7.1",
-        "symfony/uid": "^7.1",
-        "php-cs-fixer/shim": "^3.40",
+        "symfony/process": "^8.0",
+        "symfony/uid": "^8.0",
+        "php-cs-fixer/shim": "^v3.91.3",
         "phpstan/phpstan": "^2.1.0",
         "doctrine/orm": "^3.3.0",
-        "doctrine/doctrine-bundle": "^2.11"
+        "doctrine/doctrine-bundle": "^3.1.0",
+        "phpunit/phpunit": "^12.5"
     },
     "autoload": {
         "psr-4": {

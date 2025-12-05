@@ -49,10 +49,6 @@ class Kernel extends BaseKernel
                 'url' => 'sqlite:///%kernel.project_dir%/var/database.sqlite',
             ],
             'orm' => [
-                'auto_generate_proxy_classes' => false,
-                'enable_lazy_ghost_objects' => true,
-                'report_fields_where_declared' => true,
-                'naming_strategy' => 'doctrine.orm.naming_strategy.underscore_number_aware',
                 'auto_mapping' => true,
                 'controller_resolver' => [
                     'auto_mapping' => false,

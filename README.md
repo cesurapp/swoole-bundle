@@ -8,7 +8,7 @@ Failed jobs are saved in the database to be retried. Each server has built-in ba
 Scheduled tasks run simultaneously on all servers. It is not possible for tasks to run at the same time as locking is used.
 
 ### Install 
-Required Symfony 7
+Required Symfony 8
 ```bash
 composer req cesurapp/swoole-bundle
 ```
