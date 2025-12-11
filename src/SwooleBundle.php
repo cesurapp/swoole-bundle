@@ -23,7 +23,7 @@ class SwooleBundle extends AbstractBundle
 {
     public function configure(DefinitionConfigurator $definition): void
     {
-        $definition->rootNode() // @phpstan-ignore-line
+        $definition->rootNode()
         ->children()
             ->scalarNode('entrypoint')->defaultValue('public/index.php')->end()
             ->scalarNode('watch_dir')->defaultValue('/config,/src,/templates')->end()
