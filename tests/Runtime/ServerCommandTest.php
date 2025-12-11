@@ -12,6 +12,7 @@ class ServerCommandTest extends KernelTestCase
     protected function setUp(): void
     {
         $_SERVER['KERNEL_CLASS'] = Kernel::class;
+        $_ENV['SERVER_HTTP_PORT'] = 9090;
     }
 
     public function test1StopFail(): void
