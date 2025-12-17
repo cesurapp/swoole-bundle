@@ -82,7 +82,7 @@ class SwooleProcess
             if ($output = $watcher->getIncrementalOutput()) {
                 $this->output->write('Changed -> '.str_replace($this->rootDir, '', $output));
 
-                exec(sprintf('lsof -ti:%s | xargs kill -9 2>/dev/null', $_ENV['SERVER_HTTP_PORT'] ?? 80));
+                exec(sprintf('lsof -nP -t -iTCP:%s -sTCP:LISTEN | xargs kill -9 2>/dev/null', $_ENV['SERVER_HTTP_PORT'] ?? 80));
 
                 usleep(100 * 1000);
                 $server->start(null, ['watch' => random_int(100, 200)]);
@@ -112,7 +112,7 @@ class SwooleProcess
         try {
             $server->send('shutdown');
             $server->close();
-            exec(sprintf('lsof -ti:%s | xargs kill -9 2>/dev/null', $_ENV['SERVER_HTTP_PORT'] ?? 80));
+            exec(sprintf('lsof -nP -t -iTCP:%s -sTCP:LISTEN | xargs kill -9 2>/dev/null', $_ENV['SERVER_HTTP_PORT'] ?? 80));
         } catch (\Exception $exception) {
             $this->output->error($exception->getMessage());
         }
