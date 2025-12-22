@@ -6,7 +6,7 @@ use Symfony\Contracts\EventDispatcher\Event;
 
 class ClientResponseEvent extends Event
 {
-    public function __construct(private readonly string $uri, private readonly SwooleResponse $response)
+    public function __construct(private readonly string $uri, private readonly SwooleResponse $response, private readonly mixed $extra = [])
     {
     }
 
@@ -18,5 +18,10 @@ class ClientResponseEvent extends Event
     public function getResponse(): SwooleResponse
     {
         return $this->response;
+    }
+
+    public function getExtra(): array
+    {
+        return $this->extra;
     }
 }

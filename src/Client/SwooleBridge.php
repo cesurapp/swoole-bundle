@@ -18,6 +18,7 @@ class SwooleBridge implements HttpClientInterface
     public function request(string $method, string $url, array $options = []): ResponseInterface
     {
         $client = SwooleClient::create($url)->setMethod($method)->setOptions($options);
+        $extra = $options['extra'] ?? [];
 
         if (isset($options['headers'])) {
             $client->setHeaders($options['headers']);
@@ -47,13 +48,16 @@ class SwooleBridge implements HttpClientInterface
         if (isset($options['auth_bearer'])) {
             $client->setHeaders(['Authorization' => 'Bearer '.$options['auth_bearer']]);
         }
+        if (isset($options['extra'])) {
+            $client->setJsonData($options['json']);
+        }
 
         $response = new SwooleResponse($client->execute());
         if (is_array(self::$clients)) {
             self::$clients[] = $response->getInfo();
         }
 
-        $this->eventDispatcher->dispatch(new ClientResponseEvent($client->getUri(), $response));
+        $this->eventDispatcher->dispatch(new ClientResponseEvent($client->getUri(), $response, $extra));
 
         return $response;
     }
