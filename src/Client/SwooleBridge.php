@@ -48,9 +48,6 @@ class SwooleBridge implements HttpClientInterface
         if (isset($options['auth_bearer'])) {
             $client->setHeaders(['Authorization' => 'Bearer '.$options['auth_bearer']]);
         }
-        if (isset($options['extra'])) {
-            $client->setJsonData($options['json']);
-        }
 
         $response = new SwooleResponse($client->execute());
         if (is_array(self::$clients)) {
