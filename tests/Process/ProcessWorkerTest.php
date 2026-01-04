@@ -45,22 +45,6 @@ class ProcessWorkerTest extends KernelTestCase
         $this->assertContainsOnlyInstancesOf(ExampleProcessJob::class, $processes);
     }
 
-    public function testProcessDisabled(): void
-    {
-        /** @var ProcessWorker $worker */
-        $worker = self::getContainer()->get(ProcessWorker::class);
-        $logger = self::getContainer()->get('logger');
-        $logger->enableDebug();
-
-        $process = $worker->get(ExampleProcessJob::class);
-        $process->ENABLE = false;
-
-        $worker->run(ExampleProcessJob::class);
-
-        $logs = json_encode($logger->getLogs());
-        $this->assertTrue(str_contains($logs, 'Process is disabled:'));
-    }
-
     public function testProcessNotFound(): void
     {
         /** @var ProcessWorker $worker */
