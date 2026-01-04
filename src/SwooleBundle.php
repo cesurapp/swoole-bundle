@@ -7,6 +7,8 @@ use Cesurapp\SwooleBundle\Client\SwooleBridge;
 use Cesurapp\SwooleBundle\Cron\CronDataCollector;
 use Cesurapp\SwooleBundle\Cron\CronInterface;
 use Cesurapp\SwooleBundle\Cron\CronWorker;
+use Cesurapp\SwooleBundle\Process\ProcessInterface;
+use Cesurapp\SwooleBundle\Process\ProcessWorker;
 use Cesurapp\SwooleBundle\Task\TaskHandler;
 use Cesurapp\SwooleBundle\Task\TaskInterface;
 use Cesurapp\SwooleBundle\Task\TaskWorker;
@@ -32,6 +34,7 @@ class SwooleBundle extends AbstractBundle
             ->booleanNode('cron_worker')->defaultTrue()->end()
             ->booleanNode('task_worker')->defaultFalse()->end()
             ->booleanNode('task_sync_mode')->defaultFalse()->end()
+            ->booleanNode('process_worker')->defaultTrue()->end()
             ->scalarNode('failed_task_retry')->defaultValue('@EveryMinute10')->end()
             ->scalarNode('failed_task_attempt')->defaultValue(1)->end()
             ->scalarNode('websocket_handler')->defaultNull()->end()
@@ -94,6 +97,13 @@ class SwooleBundle extends AbstractBundle
             $services->load('Cesurapp\\SwooleBundle\\Command\\', './Command/Cron*.*');
         }
 
+        // Register Process Service
+        if ($builder->getParameter('swoole.process_worker')) {
+            $builder->registerForAutoconfiguration(ProcessInterface::class)
+                ->addTag('processes')
+                ->setLazy(true);
+        }
+
         // Register WebHook Handler
         if ($class = $builder->getParameter('swoole.websocket_handler')) {
             $services->set($class)->alias('websocket_handler', $class)->public();
@@ -123,6 +133,17 @@ class SwooleBundle extends AbstractBundle
                     $container
                         ->register(CronWorker::class, CronWorker::class)
                         ->addArgument(ServiceLocatorTagPass::register($container, $crons))
+                        ->setAutowired(true)
+                        ->setPublic(true);
+                }
+
+                // Init Process Worker
+                if ($container->getParameter('swoole.process_worker')) {
+                    $processes = $container->findTaggedServiceIds('processes');
+                    array_walk($processes, static fn (&$val, $id) => $val = new Reference($id));
+                    $container
+                        ->register(ProcessWorker::class, ProcessWorker::class)
+                        ->addArgument(ServiceLocatorTagPass::register($container, $processes))
                         ->setAutowired(true)
                         ->setPublic(true);
                 }

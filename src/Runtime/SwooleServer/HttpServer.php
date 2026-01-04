@@ -115,6 +115,7 @@ class HttpServer
             echo 'Http Worker  => True'.sprintf(' (%s Worker)', $this->options['http']['settings']['worker_num']).PHP_EOL;
             echo 'Task Worker  => '.($this->options['worker']['task'] ? 'True' : 'False').sprintf(' (%s Worker)', $this->options['http']['settings']['task_worker_num']).PHP_EOL;
             echo 'Cron Worker  => '.($this->options['worker']['cron'] ? 'True' : 'False').PHP_EOL;
+            echo 'Process Worker => '.($this->options['worker']['process'] ? 'True' : 'False').PHP_EOL;
             echo 'Log Level    => '.match ((int) $this->options['http']['settings']['log_level']) {
                 0 => 'LOG_DEBUG',
                 1 => 'LOG_TRACE',

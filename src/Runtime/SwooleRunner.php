@@ -4,6 +4,7 @@ namespace Cesurapp\SwooleBundle\Runtime;
 
 use Cesurapp\SwooleBundle\Runtime\SwooleServer\CronServer;
 use Cesurapp\SwooleBundle\Runtime\SwooleServer\HttpServer;
+use Cesurapp\SwooleBundle\Runtime\SwooleServer\ProcessServer;
 use Cesurapp\SwooleBundle\Runtime\SwooleServer\TaskServer;
 use Cesurapp\SwooleBundle\Runtime\SwooleServer\TcpServer;
 use Symfony\Component\HttpKernel\HttpKernelInterface;
@@ -15,6 +16,7 @@ class SwooleRunner implements RunnerInterface
         'worker' => [
             'cron' => 1,
             'task' => 1,
+            'process' => 1,
         ],
         'tcp' => [
             'port' => 9502,
@@ -111,6 +113,7 @@ class SwooleRunner implements RunnerInterface
         $httpServer = new HttpServer($this->application, self::$config);
         new TaskServer($this->application, $httpServer, self::$config);
         new CronServer($this->application, $httpServer, self::$config);
+        new ProcessServer($this->application, $httpServer, self::$config);
         new TcpServer($httpServer, self::$config);
 
         return (int) $httpServer->server->start();

@@ -40,6 +40,7 @@ class Kernel extends BaseKernel
             'replace_http_client' => true,
             'cron_worker' => true,
             'task_worker' => true,
+            'process_worker' => true,
         ]);
 
         // Doctrine Bundle Default Configuration
@@ -59,6 +60,7 @@ class Kernel extends BaseKernel
         $services = $container->services()->defaults()->autowire()->autoconfigure();
         $services->load('Cesurapp\\SwooleBundle\\Tests\\_App\\Cron\\', '_App/Cron');
         $services->load('Cesurapp\\SwooleBundle\\Tests\\_App\\Task\\', '_App/Task');
+        $services->load('Cesurapp\\SwooleBundle\\Tests\\_App\\Process\\', '_App/Process');
 
         $services->set('logger', Logger::class)
             ->public()

@@ -24,6 +24,7 @@ class ServerCommandTest extends KernelTestCase
         $cmd = $application->find('server:stop');
         $cmdTester = new CommandTester($cmd);
         $cmdTester->execute([]);
+        dump($cmdTester->getDisplay());
         $this->assertStringContainsString('Swoole HTTP server not found!', $cmdTester->getDisplay());
     }
 
