@@ -14,47 +14,37 @@ class ProcessWorkerTest extends KernelTestCase
         $_SERVER['KERNEL_CLASS'] = Kernel::class;
     }
 
-    public function testProcessWorker(): void
+    public function testGetProcess(): void
     {
-        $this->assertTrue(self::getContainer()->has(ProcessWorker::class));
-
-        /** @var ProcessWorker $worker */
-        $worker = self::getContainer()->get(ProcessWorker::class);
-        $this->assertInstanceOf(ProcessWorker::class, $worker);
-    }
-
-    public function testProcessServiceLocator(): void
-    {
-        /** @var ProcessWorker $worker */
+        self::bootKernel();
         $worker = self::getContainer()->get(ProcessWorker::class);
 
         $process = $worker->get(ExampleProcessJob::class);
+
         $this->assertInstanceOf(ExampleProcessJob::class, $process);
         $this->assertTrue($process->ENABLE);
         $this->assertTrue($process->RESTART);
-        $this->assertSame(10, $process->RESTART_DELAY);
+        $this->assertEquals(10, $process->RESTART_DELAY);
+    }
+
+    public function testGetNonExistentProcess(): void
+    {
+        self::bootKernel();
+        $worker = self::getContainer()->get(ProcessWorker::class);
+
+        $process = $worker->get('NonExistentProcessClass');
+
+        $this->assertNull($process);
     }
 
     public function testGetAllProcesses(): void
     {
-        /** @var ProcessWorker $worker */
+        self::bootKernel();
         $worker = self::getContainer()->get(ProcessWorker::class);
 
         $processes = iterator_to_array($worker->getAll());
+
         $this->assertNotEmpty($processes);
         $this->assertContainsOnlyInstancesOf(ExampleProcessJob::class, $processes);
-    }
-
-    public function testProcessNotFound(): void
-    {
-        /** @var ProcessWorker $worker */
-        $worker = self::getContainer()->get(ProcessWorker::class);
-        $logger = self::getContainer()->get('logger');
-        $logger->enableDebug();
-
-        $worker->run('NonExistentProcess');
-
-        $logs = json_encode($logger->getLogs());
-        $this->assertTrue(str_contains($logs, 'Process not found:'));
     }
 }

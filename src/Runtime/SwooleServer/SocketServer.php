@@ -7,8 +7,6 @@ use Symfony\Component\HttpKernel\HttpKernelInterface;
 
 class SocketServer extends Server
 {
-    public ?string $client_id = null;
-
     public function initHandler(HttpKernelInterface $application): void
     {
         // WebSocket Handler

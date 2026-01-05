@@ -8,31 +8,31 @@ use Symfony\Component\HttpKernel\HttpKernelInterface;
 
 class ProcessServer
 {
-    public function __construct(HttpKernelInterface $application, HttpServer $server, array $options)
+    public function __construct(HttpKernelInterface $application, array $options)
     {
         if (!$options['worker']['process']) {
             return;
         }
 
-        // Get all registered processes
+        // Get Process Worker
         $kernel = clone $application;
         $kernel->boot(); // @phpstan-ignore-line
         $worker = $kernel->getContainer()->get(ProcessWorker::class); // @phpstan-ignore-line
 
-        // Create a separate Swoole process for each registered process
+        // Create Custom Processes
         foreach ($worker->getAll() as $process) {
-            if (!$process->ENABLE) {
-                continue;
+            if ($process->ENABLE) {
+                $subProcess = new Process(function ($chilProc) use ($application, $process) {
+                    // Get Process Worker
+                    $kernel = clone $application;
+                    $kernel->boot(); // @phpstan-ignore-line
+                    $worker = $kernel->getContainer()->get(ProcessWorker::class); // @phpstan-ignore-line
+                    $worker->run($chilProc->pid, get_class($process));
+                }, false, 2, true);
+                $subProcess->start();
             }
-
-            $processClass = get_class($process);
-            $server->server->addProcess(new Process(function () use ($application, $processClass) {
-                $kernel = clone $application;
-                $kernel->boot(); // @phpstan-ignore-line
-                $worker = $kernel->getContainer()->get(ProcessWorker::class); // @phpstan-ignore-line
-
-                $worker->run($processClass);
-            }, false, 2, true));
         }
+
+        unset($worker, $kernel);
     }
 }

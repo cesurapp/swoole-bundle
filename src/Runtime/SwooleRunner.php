@@ -113,7 +113,7 @@ class SwooleRunner implements RunnerInterface
         $httpServer = new HttpServer($this->application, self::$config);
         new TaskServer($this->application, $httpServer, self::$config);
         new CronServer($this->application, $httpServer, self::$config);
-        new ProcessServer($this->application, $httpServer, self::$config);
+        new ProcessServer($this->application, self::$config);
         new TcpServer($httpServer, self::$config);
 
         return (int) $httpServer->server->start();
