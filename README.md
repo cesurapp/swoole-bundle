@@ -22,18 +22,20 @@ require_once dirname(__DIR__).'/vendor/autoload_runtime.php';
 ```
 
 __Configuration:__
-```shell
+```yaml
 # config/packages/swoole.yaml
 swoole:
   entrypoint: public/index.php
   watch_dir: /config,/src,/templates
   watch_extension: '*.php,*.yaml,*.yml,*.twig'
-  replace_http_client: true # Replace Symfony HTTP Client to Swoole Client 
+  replace_http_client: true # Replace Symfony HTTP Client to Swoole Client
   cron_worker: true # Enable Cron Worker Service
   task_worker: true # Enable Task Worker Service
   task_sync_mode: false # Enable SYNC Mode -> Default false
+  process_worker: true # Enable Process Worker Service
   failed_task_retry: '@EveryMinute10'
   failed_task_attempt: 2 # Failed Task Retry Count
+  websocket_handler: null # WebSocket Handler Class (optional)
 ```
 
 __Server Environment: .env__
@@ -91,63 +93,91 @@ bin/console task:failed:view    # Lists failed tasks
 You can use cron expression for scheduled tasks, or you can use predefined expressions.
 
 ```php
+<?php
+
+namespace App\Cron;
+
+use Cesurapp\SwooleBundle\Cron\AbstractCronJob;
+
 /**
  * Predefined Scheduling
  *
- * '@yearly'    => '0 0 1 1 *',
- * '@annually'  => '0 0 1 1 *',
- * '@monthly'   => '0 0 1 * *',
- * '@weekly'    => '0 0 * * 0',
- * '@daily'     => '0 0 * * *',
- * '@hourly'    => '0 * * * *',
- * '@EveryMinute'    => 'w* * * * *',
- * "@EveryMinute5'  => '*\/5 * * * *',
- * '@EveryMinute10'  => '*\/10 * * * *',
- * '@EveryMinute15'  => '*\/15 * * * *',
- * '@EveryMinute30'  => '*\/30 * * * *',```
+ * '@yearly'           => '0 0 1 1 *',
+ * '@annually'         => '0 0 1 1 *',
+ * '@monthly'          => '0 0 1 * *',
+ * '@weekly'           => '0 0 * * 0',
+ * '@daily'            => '0 0 * * *',
+ * '@hourly'           => '0 * * * *',
+ * '@EveryMinute'      => '* * * * *',
+ * '@EveryMinute5'     => '*/5 * * * *',
+ * '@EveryMinute10'    => '*/10 * * * *',
+ * '@EveryMinute15'    => '*/15 * * * *',
+ * '@EveryMinute30'    => '*/30 * * * *',
  */
-class ExampleJob extends \Cesurapp\SwooleBundle\Cron\AbstractCronJob {
-    /**
-     * @see AbstractCronJob
-     */
+class ExampleCron extends AbstractCronJob
+{
     public string $TIME = '@EveryMinute10';
-
-    /**
-     * Cron is Enable|Disable.
-     */
     public bool $ENABLE = true;
-    
-    /**
-     * Cron Context 
-     */
-    public function __invoke(): void {
-    
+
+    public function __invoke(): void
+    {
+        // Cron job logic here
     }
 }
 ```
 
 ### Create Task (Background Job or Queue)
-Data passed to jobs must be of type string, int, bool, array, objects cannot be serialized.
+Data passed to tasks must be serializable (string, int, bool, array). Objects cannot be serialized directly.
 
-Create:
+Create Task:
 ```php
-class ExampleTask implements \Cesurapp\SwooleBundle\Task\TaskInterface {
-    public function __invoke(object|string $data = null): void {
+<?php
+
+namespace App\Task;
+
+use Cesurapp\SwooleBundle\Task\TaskInterface;
+
+class ExampleTask implements TaskInterface
+{
+    public function __invoke(string $data): mixed
+    {
+        $payload = unserialize($data);
+
         var_dump(
-            $data['name'],
-            $data['invoke']
+            $payload['name'],
+            $payload['invoke']
         );
+
+        return 'Task completed';
     }
 }
 ```
 
-Handle Task:
+Dispatch Task:
 ```php
-public function hello(\Cesurapp\SwooleBundle\Task\TaskHandler $taskHandler) {
-    $taskHandler->dispatch(ExampleTask::class, [
-        'name' => 'Test',
-        'invoke' => 'Data'
-    ]);
+<?php
+
+namespace App\Controller;
+
+use App\Task\ExampleTask;
+use Cesurapp\SwooleBundle\Task\TaskHandler;
+use Symfony\Component\HttpFoundation\Response;
+
+class ExampleController
+{
+    public function __construct(
+        private readonly TaskHandler $taskHandler
+    ) {}
+
+    public function hello(): Response
+    {
+        $this->taskHandler->dispatch(ExampleTask::class, [
+            'name' => 'Test',
+            'invoke' => 'Data'
+        ]);
+
+        return new Response('Task dispatched');
+    }
 }
 ```
 
@@ -530,3 +560,46 @@ SERVER_HTTP_SETTINGS_PACKAGE_MAX_LENGTH=15728640  # 15MB default
 - Use `$server->isEstablished($fd)` before pushing data to avoid errors
 - WebSocket handler has access to Symfony DI container services
 - Heartbeat mechanism automatically closes idle connections
+
+### Timer-based Cron Jobs
+For simple fixed-interval tasks, you can use timer-based cron jobs instead of cron expressions. This is more efficient for high-frequency operations.
+
+```php
+<?php
+
+namespace App\Cron;
+
+use Cesurapp\SwooleBundle\Cron\AbstractCronJob;
+
+class MetricsCollectorCron extends AbstractCronJob
+{
+    // Timer interval in SECONDS (numeric value instead of cron expression)
+    public string $TIME = '30';  // Runs every 30 seconds
+    public bool $ENABLE = true;
+
+    public function __construct(
+        private readonly MetricsService $metrics
+    ) {}
+
+    public function __invoke(): void
+    {
+        $this->metrics->collect();
+    }
+}
+```
+
+**Timer vs Expression Cron:**
+- Timer: Use numeric value in seconds (e.g., `'30'`, `'60'`, `'300'`)
+- Expression: Use cron expression or predefined alias (e.g., `'@daily'`, `'*/5 * * * *'`)
+- Timer-based crons are more efficient for simple fixed intervals
+- Both types support locking mechanism to prevent concurrent execution
+
+### Requirements
+- PHP >= 8.4
+- Symfony 8+
+- Swoole Extension
+- POSIX Extension
+- PCNTL Extension
+
+### License
+MIT
