@@ -30,8 +30,8 @@ class FailedTaskCron extends AbstractCronJob
 
         do {
             $rows = $connection->fetchAllAssociative(
-                'SELECT id, task, payload, attempt FROM failed_task WHERE attempt < ? LIMIT ?',
-                [$attempt, self::BATCH_SIZE]
+                'SELECT id, task, payload, attempt FROM failed_task WHERE attempt < ? LIMIT '.self::BATCH_SIZE,
+                [$attempt]
             );
 
             foreach ($rows as $row) {
