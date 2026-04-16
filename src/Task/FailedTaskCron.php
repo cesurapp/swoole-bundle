@@ -5,13 +5,14 @@ namespace Cesurapp\SwooleBundle\Task;
 use Doctrine\DBAL\Logging\Middleware;
 use Doctrine\ORM\EntityManagerInterface;
 use Cesurapp\SwooleBundle\Cron\AbstractCronJob;
-use Cesurapp\SwooleBundle\Entity\FailedTask;
 use Psr\Log\NullLogger;
 use Swoole\Server;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 
 class FailedTaskCron extends AbstractCronJob
 {
+    private const BATCH_SIZE = 50;
+
     public function __construct(private readonly EntityManagerInterface $entityManager, private readonly ParameterBagInterface $bag)
     {
         $this->TIME = $this->bag->get('swoole.failed_task_retry');
@@ -22,29 +23,31 @@ class FailedTaskCron extends AbstractCronJob
         /** @var Server $server */
         $server = $GLOBALS['httpServer'];
 
-        // Disable SQL Logger
-        $this->entityManager->getConnection()->getConfiguration()->setMiddlewares([new Middleware(new NullLogger())]);
-        $attempt = $this->bag->get('swoole.failed_task_attempt');
-        $query = $this->entityManager
-            ->createQuery(sprintf('select f from %s f WHERE f.attempt < %s', FailedTask::class, $attempt));
+        $connection = $this->entityManager->getConnection();
+        $connection->getConfiguration()->setMiddlewares([new Middleware(new NullLogger())]);
 
-        /** @var FailedTask $task */
-        foreach ($query->toIterable() as $index => $task) {
-            $server->task([
-                'class' => $task->getTask(),
-                'payload' => $task->getPayload(),
-                'attempt' => $task->getAttempt() + 1,
-            ]);
-            $this->entityManager->remove($task);
+        $attempt = (int) $this->bag->get('swoole.failed_task_attempt');
 
-            usleep(10000);
-            if (0 === $index % 10) {
-                $this->entityManager->flush();
-                $this->entityManager->clear();
+        do {
+            $rows = $connection->fetchAllAssociative(
+                'SELECT id, task, payload, attempt FROM failed_task WHERE attempt < ? LIMIT ?',
+                [$attempt, self::BATCH_SIZE]
+            );
+
+            foreach ($rows as $row) {
+                $server->task([
+                    'class' => $row['task'],
+                    'payload' => $row['payload'],
+                    'attempt' => $row['attempt'] + 1,
+                ]);
+                usleep(10000);
             }
-        }
 
-        $this->entityManager->flush();
-        $this->entityManager->clear();
+            if ([] !== $rows) {
+                $ids = array_column($rows, 'id');
+                $placeholders = implode(',', array_fill(0, count($ids), '?'));
+                $connection->executeStatement("DELETE FROM failed_task WHERE id IN ($placeholders)", $ids);
+            }
+        } while (self::BATCH_SIZE === count($rows));
     }
 }
