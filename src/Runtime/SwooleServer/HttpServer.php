@@ -6,7 +6,6 @@ use Swoole\Http\Request;
 use Swoole\Http\Response;
 use Swoole\Http\Server;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
-use Symfony\Component\HttpFoundation\HeaderBag;
 use Symfony\Component\HttpFoundation\Request as SymfonyRequest;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -57,18 +56,25 @@ class HttpServer
 
     private function toSymfonyRequest(Request $request): SymfonyRequest
     {
-        $sfRequest = new SymfonyRequest(
+        $server = array_change_key_case($request->server ?? [], CASE_UPPER);
+        foreach ($request->header ?? [] as $name => $value) {
+            $key = strtoupper(str_replace('-', '_', $name));
+            if (\in_array($key, ['CONTENT_TYPE', 'CONTENT_LENGTH', 'CONTENT_MD5'], true)) {
+                $server[$key] = $value;
+            } else {
+                $server['HTTP_'.$key] = $value;
+            }
+        }
+
+        return new SymfonyRequest(
             $request->get ?? [],
             $request->post ?? [],
             [],
             $request->cookie ?? [],
             $request->files ?? [],
-            array_change_key_case($request->server ?? [], CASE_UPPER),
+            $server,
             $request->rawContent()
         );
-        $sfRequest->headers = new HeaderBag($request->header ?? []);
-
-        return $sfRequest;
     }
 
     private function toSwooleResponse(SymfonyResponse $sfResponse, Response $response): void

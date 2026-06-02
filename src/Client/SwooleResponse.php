@@ -58,7 +58,11 @@ readonly class SwooleResponse implements ResponseInterface
 
         $info = get_object_vars($this->client);
 
-        return $info[$type] ?? $info;
+        if (null === $type) {
+            return $info;
+        }
+
+        return $info[$type] ?? null;
     }
 
     public function __toString(): string

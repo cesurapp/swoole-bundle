@@ -85,7 +85,7 @@ class SwooleProcess
                 exec(sprintf('lsof -nP -t -iTCP:%s -sTCP:LISTEN | xargs kill -9 2>/dev/null', $_ENV['SERVER_HTTP_PORT'] ?? 80));
 
                 usleep(100 * 1000);
-                $server->start(null, ['watch' => random_int(100, 200)]);
+                $server->start(null, ['watch' => (string) random_int(100, 200)]);
             }
 
             if ($error = $watcher->getIncrementalErrorOutput()) {
