@@ -56,6 +56,11 @@ class SwooleProcess
         pcntl_signal(SIGHUP, fn () => posix_kill(posix_getpid(), SIGINT));
         pcntl_signal(SIGTSTP, fn () => posix_kill(posix_getpid(), SIGINT));
 
+        // Stop a server left over from a previous session, otherwise it keeps the HTTP port.
+        if ($this->getServer()?->isConnected()) {
+            $this->stop();
+        }
+
         // Check fsWatch Plugin
         if (!$fsWatch = new ExecutableFinder()->find('fswatch')) {
             $this->output->error('fswatch plugin not found!');
