@@ -34,7 +34,7 @@ class SwooleRunner implements RunnerInterface
                 'log_level' => SWOOLE_LOG_WARNING,
                 'max_wait_time' => 60,
                 'task_enable_coroutine' => true,
-                'task_max_request' => 0,
+                'task_max_request' => 1000,
                 'package_max_length' => 15 * 1024 * 1024,
                 'http_compression' => true,
                 'max_request' => 10000,
