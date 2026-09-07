@@ -5,6 +5,8 @@ namespace Cesurapp\SwooleBundle\Tests\Task;
 use Cesurapp\SwooleBundle\Cron\CronWorker;
 use Cesurapp\SwooleBundle\Entity\FailedTask;
 use Cesurapp\SwooleBundle\Task\TaskWorker;
+use Cesurapp\SwooleBundle\Tests\_App\AcmePayload;
+use Cesurapp\SwooleBundle\Tests\_App\Task\AcmeErrorTask;
 use Cesurapp\SwooleBundle\Tests\_App\Task\AcmeFailedTask;
 use Cesurapp\SwooleBundle\Tests\_App\Task\AcmeTask;
 use Cesurapp\SwooleBundle\Tests\Kernel;
@@ -94,6 +96,61 @@ class TaskWorkerTest extends KernelTestCase
         $failedTask = $em->getRepository(FailedTask::class)->findAll()[0];
         $this->assertSame($failedTask->getException(), 'acme task exception');
         $this->assertSame($failedTask->getPayload(), serialize('AcmeData'));
+    }
+
+    /**
+     * Görevden gelen \Error worker'ı öldürmemeli; failed_task'a düşüp devam etmeli.
+     */
+    public function testTaskErrorIsCaught(): void
+    {
+        /** @var TaskWorker $worker */
+        $worker = self::getContainer()->get(TaskWorker::class);
+        $logger = self::getContainer()->get('logger');
+        $logger->enableDebug();
+
+        $this->initDatabase(self::$kernel);
+        $worker->handle(['class' => AcmeErrorTask::class, 'payload' => serialize('')]);
+
+        $this->assertTrue(str_contains(json_encode($logger->getLogs()), 'Failed Task:'));
+        $this->assertSame(1, self::getContainer()->get('doctrine')->getRepository(FailedTask::class)->count([]));
+    }
+
+    /**
+     * Bozuk payload göreve hiç girmemeli, açıklayıcı bir hatayla failed_task'a düşmeli.
+     */
+    public function testCorruptPayloadIsRejected(): void
+    {
+        /** @var TaskWorker $worker */
+        $worker = self::getContainer()->get(TaskWorker::class);
+
+        $this->initDatabase(self::$kernel);
+        $worker->handle(['class' => AcmeTask::class, 'payload' => 'a:2:{s:12:"notification"']);
+
+        /** @var FailedTask $failedTask */
+        $failedTask = self::getContainer()->get('doctrine')->getRepository(FailedTask::class)->findAll()[0];
+        $this->assertStringContainsString('could not be unserialized', $failedTask->getException());
+    }
+
+    /**
+     * serialize() nesne alanlarını NUL baytlarıyla kodluyor; payload text sütununa
+     * girip aynen geri çıkabilmeli, ilk NUL'da kesilmemeli.
+     */
+    public function testPayloadWithNullBytesSurvivesStorage(): void
+    {
+        $em = self::getContainer()->get('doctrine')->getManager();
+        $this->initDatabase(self::$kernel);
+
+        $payload = serialize(['notification' => new AcmePayload(), 'device' => 'x']);
+        $this->assertStringContainsString("\0", $payload);
+
+        $em->persist((new FailedTask())->setTask('AcmeTask')->setPayload($payload)->setException('x'));
+        $em->flush();
+        $em->clear();
+
+        /** @var FailedTask $stored */
+        $stored = $em->getRepository(FailedTask::class)->findAll()[0];
+        $this->assertSame($payload, $stored->getPayload());
+        $this->assertIsArray(unserialize($stored->getPayload()));
     }
 
     public function testFailedCreate(): void

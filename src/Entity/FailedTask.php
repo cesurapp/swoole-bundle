@@ -17,6 +17,14 @@ class FailedTask
     #[ORM\Column(type: 'string')]
     private string $task;
 
+    /**
+     * Sütunda base64 duruyor, ham serialize() çıktısı değil.
+     *
+     * serialize() private/protected alanları `\0Sınıf\0alan` biçiminde kodluyor ve NUL
+     * baytı text sütunundan sağ çıkmıyor: kayıt ilk NUL'da kesiliyor, dönüşte
+     * unserialize() çuvallıyor, göreve dizi yerine bozuk bir dize gidiyor. Kodlama
+     * getter/setter'da saydam — dışarısı yine ham payload görüyor.
+     */
     #[ORM\Column(type: 'text', nullable: true)]
     private ?string $payload;
 
@@ -54,12 +62,16 @@ class FailedTask
 
     public function getPayload(): ?string
     {
-        return $this->payload;
+        if (null === $this->payload) {
+            return null;
+        }
+
+        return base64_decode($this->payload, true) ?: null;
     }
 
     public function setPayload(?string $payload): self
     {
-        $this->payload = $payload;
+        $this->payload = null === $payload ? null : base64_encode($payload);
 
         return $this;
     }

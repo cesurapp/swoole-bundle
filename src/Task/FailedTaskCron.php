@@ -37,7 +37,9 @@ class FailedTaskCron extends AbstractCronJob
             foreach ($rows as $row) {
                 $server->task([
                     'class' => $row['task'],
-                    'payload' => $row['payload'],
+                    // Sütun base64 tutuyor (bkz. FailedTask::$payload); burada ham SQL
+                    // okunduğu için entity'nin getter'ı devrede değil, çözüm elle.
+                    'payload' => null === $row['payload'] ? null : base64_decode($row['payload'], true),
                     'attempt' => $row['attempt'] + 1,
                 ]);
                 usleep(10000);

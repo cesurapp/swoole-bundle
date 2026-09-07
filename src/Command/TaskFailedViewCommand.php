@@ -45,7 +45,10 @@ class TaskFailedViewCommand extends Command
                     $task->getId()->toString(),
                     $task->getTask(),
                     $task->getException(),
-                    json_encode($task->getPayload(), JSON_THROW_ON_ERROR),
+                    // Nesne içeren payload'ın serialize çıktısında NUL baytları var ve
+                    // geçerli UTF-8 değil; SUBSTITUTE olmadan listeleme komutu bozuk
+                    // kaydı göstermek yerine istisna atardı.
+                    json_encode($task->getPayload(), JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE),
                     $task->getCreatedAt()->setTimezone(new \DateTimeZone('Europe/Istanbul'))->format('d/m/Y H:i:s'),
                 ], $tasks))
                 ->setFooterTitle("Page: {$offset}/{$total}")

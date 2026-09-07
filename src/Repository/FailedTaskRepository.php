@@ -52,7 +52,7 @@ class FailedTaskRepository extends ServiceEntityRepository
     /**
      * Create Failed Task.
      */
-    public function createTask(array $taskRequest, \Exception $exception): void
+    public function createTask(array $taskRequest, \Throwable $exception): void
     {
         $failedTask = (new FailedTask())
             ->setTask($taskRequest['class'])
