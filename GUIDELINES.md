@@ -192,11 +192,21 @@ class OrderController
 - Retry mechanism controlled by `failed_task_retry` and `failed_task_attempt` config
 - View failures: `bin/console task:failed:view`
 - Manual retry: `bin/console task:failed:retry`
+- Anything a task throws is recorded, `Error` included. A `TypeError` used to kill the
+  task worker outright, after which Swoole reports `No idle task worker is available`
+  and the whole queue stalls
 
 **Data constraints:**
-- Payload must be serializable (string, int, bool, array)
-- Objects are NOT supported in payload
-- Data is serialized/unserialized automatically
+- Payload must be serializable — scalars, arrays and objects are all fine
+- Data is serialized/unserialized automatically (`serialize()` / `unserialize()`)
+- Objects come back **detached**: an unserialized Doctrine entity has no EntityManager
+  behind it and carries the values it had when the task was dispatched. Pass an id and
+  reload inside the task when you need live data
+- A payload that cannot be unserialized is rejected before the task runs and lands in
+  `failed_task` with an explicit error, rather than failing deep inside the task
+- `failed_task.payload` is stored base64-encoded: `serialize()` writes private and
+  protected property names as `\0Class\0prop`, and a Postgres `text` column cannot carry
+  NUL bytes — the row would be cut at the first one and come back unusable
 
 ## 5. Cron Jobs
 
@@ -479,7 +489,8 @@ echo $client->body;
 - Use `server:watch` for development
 
 **Don'ts:**
-- Don't pass objects in task payloads (only serializable types)
+- Don't pass unserializable values in task payloads (closures, resources, PDO handles)
+- Don't rely on a Doctrine entity in a payload being managed — it arrives detached
 - Don't use blocking operations in workers
 - Don't use native `sleep()` in coroutines (use `\Swoole\Coroutine::sleep()`)
 - Don't run crons manually in production (use `cron:run` for testing only)

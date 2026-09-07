@@ -132,25 +132,40 @@ class TaskWorkerTest extends KernelTestCase
     }
 
     /**
-     * serialize() nesne alanlarını NUL baytlarıyla kodluyor; payload text sütununa
-     * girip aynen geri çıkabilmeli, ilk NUL'da kesilmemeli.
+     * serialize() nesne alanlarını `\0Sınıf\0alan` biçiminde kodluyor. Postgres text
+     * sütunu NUL baytı taşımıyor ve kayıt ilk NUL'da kesiliyor; bu yüzden sütuna
+     * yazılan değerin NUL içermemesi gerekiyor.
+     *
+     * Asıl iddia sütunun ham içeriği üzerinden ölçülüyor: testler SQLite'ta koşuyor ve
+     * SQLite NUL'a tolerans gösterdiği için yalnızca gidiş-dönüşe bakan bir test
+     * düzeltme geri alındığında da geçiyor, yani hiçbir şeyi korumuyor.
      */
-    public function testPayloadWithNullBytesSurvivesStorage(): void
+    public function testPayloadWithNullBytesIsStoredWithoutNullBytes(): void
     {
-        $em = self::getContainer()->get('doctrine')->getManager();
-        $this->initDatabase(self::$kernel);
-
         $payload = serialize(['notification' => new AcmePayload(), 'device' => 'x']);
-        $this->assertStringContainsString("\0", $payload);
+        $this->assertStringContainsString("\0", $payload, 'Fikstür NUL baytı üretmiyor.');
 
-        $em->persist((new FailedTask())->setTask('AcmeTask')->setPayload($payload)->setException('x'));
-        $em->flush();
-        $em->clear();
+        $task = (new FailedTask())->setPayload($payload);
 
-        /** @var FailedTask $stored */
-        $stored = $em->getRepository(FailedTask::class)->findAll()[0];
-        $this->assertSame($payload, $stored->getPayload());
-        $this->assertIsArray(unserialize($stored->getPayload()));
+        // Sütuna gidecek değer bu; DB'ye hiç uğramadan ölçülüyor.
+        $column = (new \ReflectionProperty(FailedTask::class, 'payload'))->getValue($task);
+        $this->assertStringNotContainsString("\0", $column, 'Sütuna NUL baytı yazılıyor; Postgres kaydı ilk NUL\'da keser.');
+
+        // Gidiş-dönüş: dışarıya yine ham payload çıkıyor.
+        $this->assertSame($payload, $task->getPayload());
+        $this->assertIsArray(unserialize($task->getPayload()));
+    }
+
+    /**
+     * Boş ve "0" gibi falsy payload'lar null'a dönüşmemeli.
+     */
+    public function testFalsyPayloadRoundTrips(): void
+    {
+        foreach (['', '0', serialize(false)] as $payload) {
+            $this->assertSame($payload, (new FailedTask())->setPayload($payload)->getPayload());
+        }
+
+        $this->assertNull((new FailedTask())->setPayload(null)->getPayload());
     }
 
     public function testFailedCreate(): void

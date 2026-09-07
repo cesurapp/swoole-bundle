@@ -39,7 +39,9 @@ class FailedTaskCron extends AbstractCronJob
                     'class' => $row['task'],
                     // Sütun base64 tutuyor (bkz. FailedTask::$payload); burada ham SQL
                     // okunduğu için entity'nin getter'ı devrede değil, çözüm elle.
-                    'payload' => null === $row['payload'] ? null : base64_decode($row['payload'], true),
+                    // Çözülemeyen kayıt null'a düşüyor; TaskWorker onu anlaşılır bir
+                    // hatayla reddediyor, sessizce false geçirmek yerine.
+                    'payload' => $this->decodePayload($row['payload']),
                     'attempt' => $row['attempt'] + 1,
                 ]);
                 usleep(10000);
@@ -51,5 +53,19 @@ class FailedTaskCron extends AbstractCronJob
                 $connection->executeStatement("DELETE FROM failed_task WHERE id IN ($placeholders)", $ids);
             }
         } while (self::BATCH_SIZE === count($rows));
+    }
+
+    /**
+     * Sütundaki base64'ü ham payload'a çevirir; çözülemezse null.
+     */
+    private function decodePayload(?string $payload): ?string
+    {
+        if (null === $payload) {
+            return null;
+        }
+
+        $decoded = base64_decode($payload, true);
+
+        return false === $decoded ? null : $decoded;
     }
 }

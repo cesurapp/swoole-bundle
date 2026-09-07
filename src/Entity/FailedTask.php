@@ -66,7 +66,11 @@ class FailedTask
             return null;
         }
 
-        return base64_decode($this->payload, true) ?: null;
+        // `?:` kullanılmıyor: geçerli ama boş/"0" bir payload'ı null'a çevirirdi.
+        // false yalnızca sütunda base64 olmayan bir şey varsa (base64 öncesi kayıt).
+        $decoded = base64_decode($this->payload, true);
+
+        return false === $decoded ? null : $decoded;
     }
 
     public function setPayload(?string $payload): self
