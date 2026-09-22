@@ -127,10 +127,15 @@ Alternative: Implement `ProcessInterface` directly instead of extending `Abstrac
 
 **Lifecycle:**
 - Processes start automatically when server starts
-- Each runs in isolated Swoole Process
-- Auto-restart controlled by `$RESTART` and `$RESTART_DELAY`
-- Set `$RESTART = false` for one-time initialization tasks
-- Services are dependency-injected via constructor
+- Each runs in isolated Swoole Process, registered with `Server::addProcess`: the server restarts
+  a process that exits or crashes, and tasks can be dispatched from inside it
+- One copy per job across instances (lock); the other instances wait on standby as failover. A
+  copy whose lock cannot be refreshed stops and is restarted, then queues for the lock again
+- Auto-restart of the job controlled by `$RESTART` and `$RESTART_DELAY`
+- Set `$RESTART = false` for one-time initialization tasks — the finished process stays parked
+  (exiting would only make the server restart it and run the job again)
+- Services are dependency-injected via constructor — and the constructor runs in the master process,
+  so open connections in `__invoke()`, never earlier
 
 **Naming convention:** Suffix with `Process` (e.g., `RedisListenerProcess`)
 
@@ -186,6 +191,12 @@ class OrderController
     }
 }
 ```
+
+**Where a dispatched task runs:** queued to the task workers from HTTP workers, cron and process
+workers. Inside a task worker Swoole refuses `task()`, and when a queue attempt is refused the task
+would be lost — in both cases `dispatch()` runs it inline instead, in the calling process, through
+the same `TaskWorker::handle()` (failures are recorded and retried as usual). In the test
+environment and with `task_sync_mode` every task runs inline.
 
 **Error handling:**
 - Failed tasks are automatically saved to database

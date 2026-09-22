@@ -39,30 +39,45 @@ class ProcessWorker
         return false;
     }
 
-    public function lockRefresh(): void
+    /**
+     * Keeps the held locks alive. A lock that cannot be refreshed is gone — its database connection
+     * dropped with a restart, say — and another instance may already hold it, so this copy stops:
+     * the server restarts the process, and the new one queues for the lock again. Letting the
+     * exception escape the timer used to end the process just the same, with nothing to restart it.
+     */
+    public function lockRefresh(?int $processPid = null): void
     {
-        foreach ($this->locks as $lock) {
-            $lock->refresh($this->lockTimeout);
+        foreach ($this->locks as $processClass => $lock) {
+            try {
+                $lock->refresh($this->lockTimeout);
+            } catch (\Throwable $exception) {
+                $this->logger->error(sprintf('Process lock lost: %s, exception: %s', $processClass, $exception->getMessage()));
+                Process::kill($processPid ?? getmypid());
+
+                return;
+            }
         }
     }
 
     /**
      * Run a specific process by class name.
+     *
+     * The process is server-managed (Server::addProcess): the manager restarts it whenever it
+     * exits. So it never exits on purpose — it waits for the lock, runs the job, and parks.
      */
     public function run(int $processPid, string $processClass): void
     {
         // Wait a random startup time 0.5-2
         Coroutine::sleep(mt_rand(500, 2000) / 1000);
 
-        // Get Lock
-        if (!$this->lockAcquire($processClass)) {
-            Process::kill($processPid);
-
-            return;
+        // Standby until the lock is ours. Another instance runs the job while it holds the lock;
+        // waiting here makes this copy the failover that takes over once that lock is released.
+        while (!$this->lockAcquire($processClass)) {
+            $this->logger->info('Process on standby, lock held elsewhere: '.$processClass);
         }
 
         // Refresh Lock
-        go(fn () => Timer::tick(($this->lockTimeout - 5) * 1000, [$this, 'lockRefresh']));
+        go(fn () => Timer::tick(($this->lockTimeout - 5) * 1000, fn () => $this->lockRefresh($processPid)));
 
         // Run Process
         /** @var AbstractProcessJob $process */
@@ -72,7 +87,7 @@ class ProcessWorker
                 $this->logger->info('Process started: '.$processClass);
                 $process();
                 $this->logger->info('Process finished: '.$processClass);
-            } catch (\Exception $exception) {
+            } catch (\Throwable $exception) {
                 $this->logger->error(sprintf('Process failed: %s, exception: %s', $processClass, $exception->getMessage()));
             }
 
@@ -82,8 +97,13 @@ class ProcessWorker
             }
         } while ($process->RESTART);
 
+        // Done for good (RESTART=false). Park instead of exiting: an exit would have the manager
+        // restart the process and run the job again. The lock stays held, so no other instance
+        // runs it either.
         $this->logger->info('Process stopped: '.$processClass);
-        Process::kill($processPid);
+        while (true) { // @phpstan-ignore-line
+            Coroutine::sleep(3600);
+        }
     }
 
     /**

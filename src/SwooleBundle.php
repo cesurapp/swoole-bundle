@@ -71,10 +71,12 @@ class SwooleBundle extends AbstractBundle
                 ->addTag('tasks')
                 ->setLazy(true);
 
-            $def = $builder->register(TaskHandler::class, TaskHandler::class);
-            if ('test' === $container->env() || $builder->getParameter('swoole.task_sync_mode')) {
-                $def->setArguments(['$worker' => new Reference(TaskWorker::class)]);
-            }
+            // The worker is always injected: besides sync mode, it runs a task inline when Swoole
+            // refuses to queue it (inside a task worker, or outside the server's own processes).
+            $builder->register(TaskHandler::class, TaskHandler::class)->setArguments([
+                '$worker' => new Reference(TaskWorker::class),
+                '$sync' => 'test' === $container->env() || (bool) $builder->getParameter('swoole.task_sync_mode'),
+            ]);
 
             $services->load('Cesurapp\\SwooleBundle\\Command\\', './Command/Task*.*');
             $services->load('Cesurapp\\SwooleBundle\\Repository\\', './Repository');

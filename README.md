@@ -185,10 +185,12 @@ class ExampleController
 Process Worker allows you to create continuously running tasks in a separate process when the server starts. It's ideal for Redis LISTEN, Postgres LISTEN, or similar continuous listening commands.
 
 **Features:**
-- Each process runs as a separate Swoole Process
+- Each process runs as a separate, server-managed Swoole Process (`Server::addProcess`)
 - Automatic restart support when the process completes
 - Configurable restart delay
 - Enable/Disable support
+- One running copy across instances (lock), with the other instances on standby as failover
+- Can dispatch tasks like any worker
 
 **Configuration:**
 ```yaml
@@ -311,15 +313,25 @@ class OneTimeProcess extends AbstractProcessJob
         // One-time operation
         $this->doSomething();
         
-        // Process terminates when completed
+        // The job is done; the process stays parked (see the notes below)
     }
 }
 ```
 
 **Notes:**
 - Each process runs as a separate Swoole Process, isolated from each other
-- Processes start automatically when the server starts
-- When `RESTART=true`, the process restarts after `RESTART_DELAY` seconds upon completion
+- Processes are registered with `Server::addProcess`: they start with the server, the server
+  restarts one that exits or crashes, and `TaskHandler::dispatch()` works inside them
+- One copy runs per job across all instances (the `process_server_<FQCN>` lock). The other
+  instances' copies wait on standby and take over when that lock is released
+- If the lock cannot be refreshed (e.g. its database connection dropped), the copy stops and the
+  server restarts it, so it queues for the lock again instead of running twice
+- When `RESTART=true`, the job runs again after `RESTART_DELAY` seconds upon completion (an
+  exception or error counts as completion)
+- When `RESTART=false`, the finished process stays parked while the server runs: exiting would
+  only have the server restart it and run the job again
+- The job's constructor runs in the master process (to read `ENABLE`): open connections in
+  `__invoke()`, never earlier
 - Processes must implement `ProcessInterface` (or extend `AbstractProcessJob`)
 - Automatically registered in Symfony DI container with lazy loading support
 
