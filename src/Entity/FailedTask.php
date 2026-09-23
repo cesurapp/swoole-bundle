@@ -7,6 +7,24 @@ use Cesurapp\SwooleBundle\Repository\FailedTaskRepository;
 use Symfony\Bridge\Doctrine\Types\UuidType;
 use Symfony\Component\Uid\UuidV7;
 
+/**
+ * A task that has not finished yet: one that failed and waits for a retry, or a durable task
+ * (TaskHandler::dispatch(..., durable: true)) from the moment it is dispatched until it succeeds.
+ *
+ * Two columns tell the states apart:
+ *
+ *   exception   delivered_at   state
+ *   ''          set            durable task running
+ *   ''          null           waiting: could not be handed to a worker yet, FailedTaskCron will
+ *   message     null           failed: waiting for a retry, or out of attempts — the "failed task" list
+ *   message     set            a retry running
+ *
+ * A failed row waits for `available_at` (the task_retry delay) before FailedTaskCron takes it again.
+ *
+ * "No failure" is an empty string rather than NULL so the column keeps the definition it always
+ * had: schema:update never has to tighten it back, even if an older release runs against rows
+ * written by this one.
+ */
 #[ORM\Entity(repositoryClass: FailedTaskRepository::class)]
 class FailedTask
 {
@@ -28,14 +46,24 @@ class FailedTask
     #[ORM\Column(type: 'text', nullable: true)]
     private ?string $payload;
 
+    /** The last run's error; '' while the task has not failed. */
     #[ORM\Column(type: 'text')]
-    private string $exception;
+    private string $exception = '';
 
+    /** Runs started so far — each run carries its number, so a stale run cannot touch a newer one. */
     #[ORM\Column(type: 'smallint')]
     protected int $attempt = 0;
 
     #[ORM\Column(type: 'datetime')]
     private \DateTime $createdAt;
+
+    /** When the running attempt was handed to a worker; null while nothing runs it. */
+    #[ORM\Column(type: 'datetime_immutable', nullable: true)]
+    private ?\DateTimeImmutable $deliveredAt = null;
+
+    /** The earliest the next attempt may start (the `task_retry` delay after a failure); null is now. */
+    #[ORM\Column(type: 'datetime_immutable', nullable: true)]
+    private ?\DateTimeImmutable $availableAt = null;
 
     public function __construct()
     {
@@ -112,6 +140,30 @@ class FailedTask
     public function setCreatedAt(\DateTime $createdAt): self
     {
         $this->createdAt = $createdAt;
+
+        return $this;
+    }
+
+    public function getDeliveredAt(): ?\DateTimeImmutable
+    {
+        return $this->deliveredAt;
+    }
+
+    public function setDeliveredAt(?\DateTimeImmutable $deliveredAt): self
+    {
+        $this->deliveredAt = $deliveredAt;
+
+        return $this;
+    }
+
+    public function getAvailableAt(): ?\DateTimeImmutable
+    {
+        return $this->availableAt;
+    }
+
+    public function setAvailableAt(?\DateTimeImmutable $availableAt): self
+    {
+        $this->availableAt = $availableAt;
 
         return $this;
     }

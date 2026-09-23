@@ -2,7 +2,6 @@
 
 namespace Cesurapp\SwooleBundle\Runtime;
 
-use Swoole\Client;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\Process\ExecutableFinder;
 use Symfony\Component\Process\PhpExecutableFinder;
@@ -17,11 +16,19 @@ class SwooleProcess
     }
 
     /**
+     * The file a running server keeps its master process id in. Swoole deletes it on shutdown.
+     */
+    public static function pidFile(string $rootDir): string
+    {
+        return rtrim($rootDir, '/').'/var/swoole.pid';
+    }
+
+    /**
      * Start Server.
      */
     public function start(string $phpBinary, bool $detach = false): bool
     {
-        if ($this->getServer()?->isConnected()) {
+        if ($this->pid()) {
             $this->output->warning('Swoole HTTP Server is Running');
 
             return false;
@@ -57,7 +64,7 @@ class SwooleProcess
         pcntl_signal(SIGTSTP, fn () => posix_kill(posix_getpid(), SIGINT));
 
         // Stop a server left over from a previous session, otherwise it keeps the HTTP port.
-        if ($this->getServer()?->isConnected()) {
+        if ($this->pid()) {
             $this->stop();
         }
 
@@ -87,7 +94,7 @@ class SwooleProcess
             if ($output = $watcher->getIncrementalOutput()) {
                 $this->output->write('Changed -> '.str_replace($this->rootDir, '', $output));
 
-                exec(sprintf('lsof -nP -t -iTCP:%s -sTCP:LISTEN | xargs kill -9 2>/dev/null', $_ENV['SERVER_HTTP_PORT'] ?? 80));
+                $this->kill();
 
                 usleep(100 * 1000);
                 $server->start(null, ['watch' => (string) random_int(100, 200)]);
@@ -103,23 +110,28 @@ class SwooleProcess
 
     /**
      * Stop Server.
+     *
+     * The server ends its running requests first, for up to max_wait_time seconds. One that is still
+     * up well after that is killed.
      */
-    public function stop(?string $tcpHost = null, ?int $tcpPort = null): bool
+    public function stop(): bool
     {
-        $server = $this->getServer($tcpHost ?? '127.0.0.1', $tcpPort ?? 9502);
-        if (!$server || !$server->isConnected()) {
+        if (!$pid = $this->pid()) {
             $this->output->error('Swoole HTTP server not found!');
 
             return false;
         }
 
-        // Shutdown
-        try {
-            $server->send('shutdown');
-            $server->close();
-            exec(sprintf('lsof -nP -t -iTCP:%s -sTCP:LISTEN | xargs kill -9 2>/dev/null', $_ENV['SERVER_HTTP_PORT'] ?? 80));
-        } catch (\Exception $exception) {
-            $this->output->error($exception->getMessage());
+        posix_kill($pid, SIGTERM);
+        $deadline = time() + (int) ($_ENV['SERVER_HTTP_SETTINGS_MAX_WAIT_TIME'] ?? 60) + 10;
+        while (posix_kill($pid, 0) && time() < $deadline) {
+            pcntl_waitpid($pid, $status, WNOHANG); // collects it, when this process started it
+            usleep(100 * 1000);
+        }
+
+        if (posix_kill($pid, 0)) {
+            $this->kill();
+            $this->output->warning('Swoole HTTP Server did not stop in time, it was killed.');
         }
 
         $this->output->success('Swoole HTTP Server is Stopped!');
@@ -128,21 +140,20 @@ class SwooleProcess
     }
 
     /**
-     * Get Current Process ID.
+     * The running server's master process id.
      */
-    public function getServer(?string $tcpHost = null, ?int $tcpPort = null): ?Client
+    private function pid(): ?int
     {
-        $tcpClient = new Client(SWOOLE_SOCK_TCP);
+        $pid = (int) @file_get_contents(self::pidFile($this->rootDir));
 
-        try {
-            @$tcpClient->connect($tcpHost ?? '127.0.0.1', $tcpPort ?? 9502, 1);
-            if (!$tcpClient->isConnected()) {
-                return null;
-            }
-        } catch (\Exception) {
-            return null;
-        }
+        return $pid > 0 && posix_kill($pid, 0) ? $pid : null;
+    }
 
-        return $tcpClient;
+    /**
+     * Kills the whole server at once: all of its processes hold the HTTP port.
+     */
+    private function kill(): void
+    {
+        exec(sprintf('lsof -nP -t -iTCP:%s -sTCP:LISTEN | xargs kill -9 2>/dev/null', $_ENV['SERVER_HTTP_PORT'] ?? 80));
     }
 }

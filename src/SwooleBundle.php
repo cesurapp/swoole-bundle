@@ -6,9 +6,11 @@ use Cesurapp\SwooleBundle\Client\ClientDataCollector;
 use Cesurapp\SwooleBundle\Client\SwooleBridge;
 use Cesurapp\SwooleBundle\Cron\CronDataCollector;
 use Cesurapp\SwooleBundle\Cron\CronInterface;
+use Cesurapp\SwooleBundle\Cron\CronScheduler;
 use Cesurapp\SwooleBundle\Cron\CronWorker;
 use Cesurapp\SwooleBundle\Process\ProcessInterface;
 use Cesurapp\SwooleBundle\Process\ProcessWorker;
+use Cesurapp\SwooleBundle\Repository\FailedTaskRepository;
 use Cesurapp\SwooleBundle\Task\TaskHandler;
 use Cesurapp\SwooleBundle\Task\TaskInterface;
 use Cesurapp\SwooleBundle\Task\TaskWorker;
@@ -35,9 +37,15 @@ class SwooleBundle extends AbstractBundle
             ->booleanNode('task_worker')->defaultFalse()->end()
             ->booleanNode('task_sync_mode')->defaultFalse()->end()
             ->booleanNode('process_worker')->defaultTrue()->end()
-            ->scalarNode('failed_task_retry')->defaultValue('@EveryMinute10')->end()
-            ->scalarNode('failed_task_attempt')->defaultValue(1)->end()
-            ->scalarNode('websocket_handler')->defaultNull()->end()
+            // Seconds before each retry of a failed task: one entry per retry, so [60, 300] runs a
+            // task at most three times. FailedTaskCron looks every minute, hence the 60-second floor.
+            ->arrayNode('task_retry')
+                ->integerPrototype()->min(60)->end()
+                ->defaultValue([600])
+            ->end()
+            // Seconds an attempt of a stored task may run before it is taken as lost and run again.
+            // Keep it above the longest durable task.
+            ->integerNode('task_redeliver_timeout')->defaultValue(3600)->min(60)->end()
             ->end();
     }
 
@@ -73,17 +81,19 @@ class SwooleBundle extends AbstractBundle
 
             // The worker is always injected: besides sync mode, it runs a task inline when Swoole
             // refuses to queue it (inside a task worker, or outside the server's own processes).
+            // The store keeps durable tasks.
             $builder->register(TaskHandler::class, TaskHandler::class)->setArguments([
                 '$worker' => new Reference(TaskWorker::class),
                 '$sync' => 'test' === $container->env() || (bool) $builder->getParameter('swoole.task_sync_mode'),
+                '$store' => new Reference(FailedTaskRepository::class),
             ]);
 
             $services->load('Cesurapp\\SwooleBundle\\Command\\', './Command/Task*.*');
             $services->load('Cesurapp\\SwooleBundle\\Repository\\', './Repository');
             $services->load('Cesurapp\\SwooleBundle\\Entity\\', './Entity');
 
-            // Failed Task Cron
-            $services->load('Cesurapp\\SwooleBundle\\Task\\', './Task/*Cron.php');
+            // Failed Task Cron: tagged here, so it runs even with cron_worker off
+            $services->load('Cesurapp\\SwooleBundle\\Task\\', './Task/*Cron.php')->tag('crons');
         }
 
         // Register Cron Service
@@ -105,11 +115,6 @@ class SwooleBundle extends AbstractBundle
                 ->addTag('processes')
                 ->setLazy(true);
         }
-
-        // Register WebHook Handler
-        if ($class = $builder->getParameter('swoole.websocket_handler')) {
-            $services->set($class)->alias('websocket_handler', $class)->public();
-        }
     }
 
     public function build(ContainerBuilder $container): void
@@ -124,17 +129,22 @@ class SwooleBundle extends AbstractBundle
                     $container
                         ->register(TaskWorker::class, TaskWorker::class)
                         ->addArgument(ServiceLocatorTagPass::register($container, $tasks))
+                        ->setArgument('$retry', '%swoole.task_retry%')
                         ->setAutowired(true)
                         ->setPublic(true);
                 }
 
-                // Init Cron Worker
-                if ($container->getParameter('swoole.cron_worker')) {
+                // Init Cron Worker, for FailedTaskCron alone when only the task worker is on
+                if ($container->getParameter('swoole.cron_worker') || $container->getParameter('swoole.task_worker')) {
                     $crons = $container->findTaggedServiceIds('crons');
                     array_walk($crons, static fn (&$val, $id) => $val = new Reference($id));
                     $container
                         ->register(CronWorker::class, CronWorker::class)
                         ->addArgument(ServiceLocatorTagPass::register($container, $crons))
+                        ->setAutowired(true)
+                        ->setPublic(true);
+                    $container
+                        ->register(CronScheduler::class, CronScheduler::class)
                         ->setAutowired(true)
                         ->setPublic(true);
                 }

@@ -4,6 +4,7 @@ namespace Cesurapp\SwooleBundle\Process;
 
 use Psr\Log\LoggerInterface;
 use Swoole\Coroutine;
+use Swoole\Event;
 use Swoole\Process;
 use Swoole\Timer;
 use Symfony\Component\DependencyInjection\ServiceLocator;
@@ -12,7 +13,17 @@ use Symfony\Component\Lock\SharedLockInterface;
 
 class ProcessWorker
 {
-    private int $lockTimeout = 15;
+    /** Seconds between two checks of the held lock. */
+    private const int LOCK_CHECK = 10;
+
+    /**
+     * Seconds the lock lasts past its last refresh, with a store whose locks expire (Redis, a
+     * database table). The refresh comes every LOCK_CHECK seconds, but only when the job lets the
+     * process breathe: a job that holds it up longer (a long pdo_pgsql query, say) lets the lock
+     * expire, and another instance's copy starts the job beside this one. A PostgreSQL advisory
+     * lock never expires; it drops with its connection.
+     */
+    private int $lockTimeout = 60;
 
     /** @var array<SharedLockInterface> */
     private array $locks = [];
@@ -21,22 +32,19 @@ class ProcessWorker
     {
     }
 
+    /**
+     * Takes the job's lock if it is free, without waiting.
+     */
     public function lockAcquire(string $processClass): bool
     {
         $lock = $this->lockFactory->createLock('process_server_'.$processClass, $this->lockTimeout);
-        $retryTimeout = $this->lockTimeout + 5;
-        while ($retryTimeout > 0) {
-            if ($lock->acquire()) {
-                $this->locks[$processClass] = $lock;
-
-                return true;
-            }
-
-            $retryTimeout -= 5;
-            Coroutine::sleep(5);
+        if (!$lock->acquire()) {
+            return false;
         }
 
-        return false;
+        $this->locks[$processClass] = $lock;
+
+        return true;
     }
 
     /**
@@ -60,6 +68,23 @@ class ProcessWorker
     }
 
     /**
+     * Lets the held locks go, so the next copy (after a restart, or on another instance) takes over
+     * at once instead of waiting for them to expire.
+     */
+    public function lockRelease(): void
+    {
+        foreach ($this->locks as $processClass => $lock) {
+            try {
+                $lock->release();
+            } catch (\Throwable $exception) {
+                $this->logger->warning(sprintf('Process lock release failed: %s, exception: %s', $processClass, $exception->getMessage()));
+            }
+        }
+
+        $this->locks = [];
+    }
+
+    /**
      * Run a specific process by class name.
      *
      * The process is server-managed (Server::addProcess): the manager restarts it whenever it
@@ -72,12 +97,26 @@ class ProcessWorker
 
         // Standby until the lock is ours. Another instance runs the job while it holds the lock;
         // waiting here makes this copy the failover that takes over once that lock is released.
-        while (!$this->lockAcquire($processClass)) {
-            $this->logger->info('Process on standby, lock held elsewhere: '.$processClass);
+        for ($attempts = 0; !$this->lockAcquire($processClass); ++$attempts) {
+            if (0 === $attempts % 12) {
+                $this->logger->info('Process on standby, lock held elsewhere: '.$processClass);
+            }
+
+            Coroutine::sleep(5);
         }
 
         // Refresh Lock
-        go(fn () => Timer::tick(($this->lockTimeout - 5) * 1000, fn () => $this->lockRefresh($processPid)));
+        go(fn () => Timer::tick(self::LOCK_CHECK * 1000, fn () => $this->lockRefresh($processPid)));
+
+        // A stop (the server's, or a lost lock's) lets the lock go before the process ends.
+        Process::signal(SIGTERM, fn () => $this->stop());
+
+        // Taken over from another copy, which may not have let go but lost its database session (a
+        // restart, say) and runs on until its next check: give it the time to notice and stop.
+        if ($attempts > 0) {
+            $this->logger->info(sprintf('Process took the lock over, starting in %d seconds: %s', self::LOCK_CHECK + 5, $processClass));
+            Coroutine::sleep(self::LOCK_CHECK + 5);
+        }
 
         // Run Process
         /** @var AbstractProcessJob $process */
@@ -104,6 +143,19 @@ class ProcessWorker
         while (true) { // @phpstan-ignore-line
             Coroutine::sleep(3600);
         }
+    }
+
+    /**
+     * Ends the process on SIGTERM, with its locks released.
+     */
+    private function stop(): void
+    {
+        $this->lockRelease();
+
+        // The job's coroutine is still asleep: end the loop without Swoole reporting a deadlock.
+        Coroutine::set(['enable_deadlock_check' => false]);
+        Timer::clearAll();
+        Event::exit();
     }
 
     /**

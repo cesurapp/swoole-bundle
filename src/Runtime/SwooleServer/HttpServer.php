@@ -14,12 +14,11 @@ use Symfony\Component\HttpKernel\TerminableInterface;
 
 class HttpServer
 {
-    public SocketServer|Server $server;
+    public Server $server;
 
     public function __construct(private readonly HttpKernelInterface $application, private readonly array $options)
     {
-        $class = $this->options['http']['socket'] ? SocketServer::class : Server::class;
-        $this->server = new $class(
+        $this->server = new Server(
             $this->options['http']['host'],
             (int) $this->options['http']['port'],
             (int) $this->options['http']['mode'],
@@ -30,11 +29,6 @@ class HttpServer
         // Manager Start
         $this->server->on('request', [$this, 'onRequest']);
         $this->server->on('managerstart', [$this, 'onStart']);
-
-        // Init Socket Handler
-        if ($this->server instanceof SocketServer) {
-            $this->server->initHandler($this->application);
-        }
 
         $GLOBALS['httpServer'] = $this->server;
     }
@@ -82,7 +76,8 @@ class HttpServer
         // Set Header
         $response->status($sfResponse->getStatusCode());
         foreach ($sfResponse->headers->all() as $name => $values) {
-            $response->header($name, !is_array($values) ? (string) $values : implode(',', $values)); // @phpstan-ignore-line
+            // A line per value: joined into one, several cookies would reach the browser as one.
+            $response->header($name, $values);
         }
 
         switch (true) {
@@ -108,7 +103,7 @@ class HttpServer
     /**
      * Handle Server Start Event.
      */
-    public function onStart(Server|SocketServer $server): void
+    public function onStart(Server $server): void
     {
         // Server Information
         $watch = $this->options['worker']['watch'] ?? 1;
@@ -116,8 +111,6 @@ class HttpServer
             echo 'Swoole Server Information'.PHP_EOL;
             echo '------------------------------'.PHP_EOL;
             echo 'Host         => '.$this->options['http']['host'].':'.$this->options['http']['port'].PHP_EOL;
-            echo 'Tcp Host     => 127.0.0.1:'.$this->options['tcp']['port'].PHP_EOL;
-            echo 'Web Socket   => '.($this->options['http']['socket'] ? 'True' : 'False').PHP_EOL;
             echo 'Http Worker  => True'.sprintf(' (%s Worker)', $this->options['http']['settings']['worker_num']).PHP_EOL;
             echo 'Task Worker  => '.($this->options['worker']['task'] ? 'True' : 'False').sprintf(' (%s Worker)', $this->options['http']['settings']['task_worker_num']).PHP_EOL;
             echo 'Cron Worker  => '.($this->options['worker']['cron'] ? 'True' : 'False').PHP_EOL;

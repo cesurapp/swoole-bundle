@@ -2,20 +2,29 @@
 
 namespace Cesurapp\SwooleBundle\Task;
 
-use Doctrine\DBAL\Logging\Middleware;
-use Doctrine\ORM\EntityManagerInterface;
 use Cesurapp\SwooleBundle\Cron\AbstractCronJob;
-use Psr\Log\NullLogger;
+use Cesurapp\SwooleBundle\Repository\FailedTaskRepository;
 use Swoole\Server;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 
+/**
+ * Runs the store's unfinished tasks, every minute: failures whose `task_retry` delay is over and
+ * that have retries left, durable tasks nothing could take yet, and attempts whose worker died — an
+ * attempt handed over longer than `task_redeliver_timeout` ago is taken as lost. Each row is
+ * claimed before it is queued and stays until the task succeeds, so a restart in between loses
+ * nothing.
+ */
 class FailedTaskCron extends AbstractCronJob
 {
-    private const BATCH_SIZE = 50;
+    public string $TIME = '@EveryMinute';
 
-    public function __construct(private readonly EntityManagerInterface $entityManager, private readonly ParameterBagInterface $bag)
+    private const int BATCH_SIZE = 50;
+
+    /** Between two queued tasks: the only brake on a backlog, since the task workers take everything. */
+    private const int PACE_MICROSECONDS = 5000;
+
+    public function __construct(private readonly FailedTaskRepository $store, private readonly ParameterBagInterface $bag)
     {
-        $this->TIME = $this->bag->get('swoole.failed_task_retry');
     }
 
     public function __invoke(): void
@@ -23,49 +32,41 @@ class FailedTaskCron extends AbstractCronJob
         /** @var Server $server */
         $server = $GLOBALS['httpServer'];
 
-        $connection = $this->entityManager->getConnection();
-        $connection->getConfiguration()->setMiddlewares([new Middleware(new NullLogger())]);
+        $retries = count($this->bag->get('swoole.task_retry'));
+        $timeout = (int) $this->bag->get('swoole.task_redeliver_timeout');
 
-        $attempt = (int) $this->bag->get('swoole.failed_task_attempt');
+        $this->store->reap(
+            new \DateTimeImmutable("-$timeout seconds"),
+            sprintf('Lost: not finished within %d seconds, its worker was stopped or killed.', $timeout),
+        );
 
+        $after = null;
         do {
-            $rows = $connection->fetchAllAssociative(
-                'SELECT id, task, payload, attempt FROM failed_task WHERE attempt < ? LIMIT '.self::BATCH_SIZE,
-                [$attempt]
-            );
+            $rows = $this->store->due($retries, self::BATCH_SIZE, $after);
 
             foreach ($rows as $row) {
-                $server->task([
-                    'class' => $row['task'],
-                    // Sütun base64 tutuyor (bkz. FailedTask::$payload); burada ham SQL
-                    // okunduğu için entity'nin getter'ı devrede değil, çözüm elle.
-                    // Çözülemeyen kayıt null'a düşüyor; TaskWorker onu anlaşılır bir
-                    // hatayla reddediyor, sessizce false geçirmek yerine.
-                    'payload' => $this->decodePayload($row['payload']),
-                    'attempt' => $row['attempt'] + 1,
-                ]);
-                usleep(10000);
-            }
+                $after = $row['id'];
+                if (!$this->store->claim($row['id'], $row['attempt'])) {
+                    continue; // taken by another instance
+                }
 
-            if ([] !== $rows) {
-                $ids = array_column($rows, 'id');
-                $placeholders = implode(',', array_fill(0, count($ids), '?'));
-                $connection->executeStatement("DELETE FROM failed_task WHERE id IN ($placeholders)", $ids);
+                $attempt = $row['attempt'] + 1;
+                $accepted = $server->task([
+                    'class' => $row['task'],
+                    'payload' => $row['payload'],
+                    'id' => $row['id'],
+                    'attempt' => $attempt,
+                ]);
+
+                // Swoole took nothing: hand the attempt back and leave the rest for the next run.
+                if (false === $accepted) {
+                    $this->store->release($row['id'], $attempt);
+
+                    return;
+                }
+
+                usleep(self::PACE_MICROSECONDS);
             }
         } while (self::BATCH_SIZE === count($rows));
-    }
-
-    /**
-     * Sütundaki base64'ü ham payload'a çevirir; çözülemezse null.
-     */
-    private function decodePayload(?string $payload): ?string
-    {
-        if (null === $payload) {
-            return null;
-        }
-
-        $decoded = base64_decode($payload, true);
-
-        return false === $decoded ? null : $decoded;
     }
 }

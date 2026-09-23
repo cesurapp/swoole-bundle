@@ -6,6 +6,8 @@ use Cesurapp\SwooleBundle\Process\ProcessWorker;
 use Cesurapp\SwooleBundle\Tests\_App\Process\ExampleProcessJob;
 use Cesurapp\SwooleBundle\Tests\Kernel;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\Lock\LockFactory;
 
 class ProcessWorkerTest extends KernelTestCase
 {
@@ -35,6 +37,21 @@ class ProcessWorkerTest extends KernelTestCase
         $process = $worker->get('NonExistentProcessClass');
 
         $this->assertNull($process);
+    }
+
+    public function testLockReleaseLetsNextCopyTakeOver(): void
+    {
+        self::bootKernel();
+        /** @var ProcessWorker $worker */
+        $worker = self::getContainer()->get(ProcessWorker::class);
+        $nextCopy = new ProcessWorker(new ServiceLocator([]), self::getContainer()->get('logger'), self::getContainer()->get(LockFactory::class));
+
+        $this->assertTrue($worker->lockAcquire(ExampleProcessJob::class));
+        $this->assertFalse($nextCopy->lockAcquire(ExampleProcessJob::class)); // at once, no waiting
+
+        $worker->lockRelease();
+        $this->assertTrue($nextCopy->lockAcquire(ExampleProcessJob::class));
+        $nextCopy->lockRelease();
     }
 
     public function testGetAllProcesses(): void

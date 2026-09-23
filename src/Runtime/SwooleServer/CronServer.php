@@ -2,10 +2,16 @@
 
 namespace Cesurapp\SwooleBundle\Runtime\SwooleServer;
 
-use Cesurapp\SwooleBundle\Cron\CronWorker;
+use Cesurapp\SwooleBundle\Cron\CronScheduler;
 use Swoole\Process;
 use Symfony\Component\HttpKernel\HttpKernelInterface;
 
+/**
+ * Registers the cron scheduler as a server-managed process (Server::addProcess).
+ *
+ * The scheduler forks a process for every run, so its own process runs without coroutines: Swoole
+ * refuses to fork inside a coroutine. The runs have coroutines of their own (see CronScheduler).
+ */
 class CronServer
 {
     public function __construct(HttpKernelInterface $application, HttpServer $server, array $options)
@@ -17,26 +23,7 @@ class CronServer
         $server->server->addProcess(new Process(function () use ($application) {
             $kernel = clone $application;
             $kernel->boot(); // @phpstan-ignore-line
-            $worker = $kernel->getContainer()->get(CronWorker::class); // @phpstan-ignore-line
-
-            while (true) { // @phpstan-ignore-line
-                sleep(5);
-                $worker->run();
-                sleep(55);
-            }
-        }, false, 2, true));
-
-        // Timer Cron
-        $server->server->addProcess(new Process(function (Process $process) use ($application) {
-            $kernel = clone $application;
-            $kernel->boot(); // @phpstan-ignore-line
-            $worker = $kernel->getContainer()->get(CronWorker::class); // @phpstan-ignore-line
-
-            $worker->initTimerCron();
-            while (true) { // @phpstan-ignore-line
-                sleep(5);
-                $worker->runTimer(5);
-            }
-        }, false, 2, true));
+            $kernel->getContainer()->get(CronScheduler::class)->run(); // @phpstan-ignore-line
+        }, false, 2, false));
     }
 }

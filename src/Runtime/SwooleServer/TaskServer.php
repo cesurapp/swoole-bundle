@@ -5,7 +5,6 @@ namespace Cesurapp\SwooleBundle\Runtime\SwooleServer;
 use Cesurapp\SwooleBundle\Task\TaskWorker;
 use Swoole\Http\Server;
 use Swoole\Server\Task;
-use Swoole\WebSocket\Server as WebSocketServer;
 use Symfony\Component\HttpKernel\HttpKernelInterface;
 
 class TaskServer
@@ -33,7 +32,7 @@ class TaskServer
     /**
      * Handle Task.
      */
-    public function onTask(Server|WebSocketServer $server, Task $task): void
+    public function onTask(Server $server, Task $task): void
     {
         $this->taskWorker->handle($task->data);
     }

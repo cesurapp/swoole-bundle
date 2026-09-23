@@ -2,67 +2,28 @@
 
 namespace Cesurapp\SwooleBundle\Command;
 
-use Doctrine\DBAL\Logging\Middleware;
-use Doctrine\ORM\EntityManagerInterface;
-use Cesurapp\SwooleBundle\Entity\FailedTask;
-use Psr\Log\NullLogger;
-use Swoole\Client;
+use Cesurapp\SwooleBundle\Repository\FailedTaskRepository;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
-#[AsCommand(name: 'task:failed:retry', description: 'Send all failed tasks to queue.')]
+#[AsCommand(name: 'task:failed:retry', description: 'Retry every failed task on the next FailedTaskCron run.')]
 class TaskFailedRetryCommand extends Command
 {
-    public function __construct(private readonly EntityManagerInterface $entityManager)
+    public function __construct(private readonly FailedTaskRepository $failedTaskRepo)
     {
         parent::__construct();
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $io = new SymfonyStyle($input, $output);
-        $client = new Client(SWOOLE_SOCK_TCP);
+        // The rows get their attempts back and stay put: FailedTaskCron claims and queues them like
+        // any retry, and each one leaves the store only when its task succeeds.
+        $count = $this->failedTaskRepo->retryFailed();
 
-        // Connect Swoole TCP Server
-        try {
-            $client->connect('0.0.0.0', $_ENV['SERVER_TCP_PORT'], 1.5);
-            if (!$client->isConnected()) {
-                $io->error('Client not connected!');
-            }
-        } catch (\Exception $exception) {
-            $io->error($exception->getMessage());
-
-            return Command::FAILURE;
-        }
-
-        $this->entityManager->getConnection()->getConfiguration()
-            ->setMiddlewares([new Middleware(new NullLogger())]);
-        $query = $this->entityManager->createQuery(sprintf('select f from %s f', FailedTask::class));
-
-        // Send All
-        /** @var FailedTask $task */
-        foreach ($query->toIterable() as $index => $task) {
-            $client->send('taskRetry::'.json_encode([
-                'class' => $task->getTask(),
-                'payload' => $task->getPayload(),
-                'attempt' => $task->getAttempt() + 1,
-            ], JSON_THROW_ON_ERROR));
-            if ('1' === $client->recv()) {
-                $this->entityManager->remove($task);
-            }
-
-            usleep(10 * 1000);
-            if (0 === $index % 10) {
-                $this->entityManager->flush();
-                $this->entityManager->clear();
-            }
-        }
-
-        $this->entityManager->flush();
-        $this->entityManager->clear();
+        new SymfonyStyle($input, $output)->success(sprintf('%d failed task(s) will be retried on the next FailedTaskCron run.', $count));
 
         return Command::SUCCESS;
     }

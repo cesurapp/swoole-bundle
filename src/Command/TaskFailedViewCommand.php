@@ -24,7 +24,8 @@ class TaskFailedViewCommand extends Command
         $io = new SymfonyStyle($input, $output);
 
         // Find Total
-        if (!$total = $this->failedTaskRepo->count([])) {
+        $total = (int) $this->failedTaskRepo->failedQuery()->select('COUNT(q.id)')->getQuery()->getSingleScalarResult();
+        if (!$total) {
             $io->success('Failed task not found!');
 
             return Command::SUCCESS;

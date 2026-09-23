@@ -212,6 +212,21 @@ class SwooleClient
         return $this;
     }
 
+    /**
+     * Verifies the server's certificate, and that it is issued for the host. Off by default: without
+     * it any certificate is accepted.
+     */
+    public function setRequiredSsl(bool $required = true): self
+    {
+        // ssl_verify_peer checks the certificate chain only; the host name is checked against ssl_host_name.
+        $this->client->set([
+            'ssl_verify_peer' => $required,
+            'ssl_host_name' => $this->client->host,
+        ]);
+
+        return $this;
+    }
+
     public function setProxy(string $host, int $port, ?string $username, ?string $password): self
     {
         $this->client->set([
