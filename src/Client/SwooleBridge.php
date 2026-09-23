@@ -64,7 +64,8 @@ class SwooleBridge implements HttpClientInterface
 
     public function stream(ResponseInterface|iterable $responses, ?float $timeout = null): ResponseStreamInterface
     {
-        throw new \Exception('Swoole bridge stream not configured!');
+        // Bodies are already complete, so there is nothing to wait on and $timeout never applies
+        return new SwooleResponseStream($responses instanceof ResponseInterface ? [$responses] : $responses);
     }
 
     public function withOptions(array $options): static

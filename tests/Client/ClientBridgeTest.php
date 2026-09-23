@@ -42,6 +42,27 @@ class ClientBridgeTest extends KernelTestCase
         $scheduler->start();
     }
 
+    public function testClientStream(): void
+    {
+        /** @var SwooleBridge $client */
+        $client = self::getContainer()->get('http_client');
+
+        $scheduler = new Scheduler();
+        $scheduler->add(function () use ($client) {
+            $req = $client->request('GET', 'https://www.google.com');
+
+            $body = '';
+            foreach ($client->stream($req) as $response => $chunk) {
+                $this->assertSame($req, $response);
+                $body .= $chunk->getContent();
+            }
+
+            $this->assertTrue($chunk->isLast());
+            $this->assertSame($req->getContent(), $body);
+        });
+        $scheduler->start();
+    }
+
     public function testClientRequiredSsl(): void
     {
         /** @var SwooleBridge $bridge */
