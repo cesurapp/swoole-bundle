@@ -5,7 +5,7 @@
          failOnDeprecation="true"
          failOnNotice="true"
          failOnWarning="true"
-         bootstrap="vendor/autoload.php"
+         bootstrap="tests/bootstrap.php"
          cacheDirectory="var">
     <php>
         <server name="KERNEL_CLASS" value="Cesurapp\SwooleBundle\Tests\Kernel"/>
@@ -22,7 +22,7 @@
     </testsuites>
 
     <source ignoreSuppressionOfDeprecations="true"
-            ignoreIndirectDeprecations="true"
+            ignoreIndirectDeprecations="false"
             restrictNotices="true"
             restrictWarnings="true"
     >

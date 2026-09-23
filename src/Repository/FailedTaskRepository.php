@@ -51,7 +51,7 @@ class FailedTaskRepository extends ServiceEntityRepository
     public function getFailedTask(?FailedTask $nextTask = null, int $limit = 10): QueryBuilder
     {
         $query = $this->failedQuery()
-            ->orderBy('q.id', 'DESC')
+            ->orderBy('q.id', \SortDirection::Descending)
             ->setMaxResults($limit);
 
         if ($nextTask) {
