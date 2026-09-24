@@ -51,6 +51,10 @@ class SwooleBridge implements HttpClientInterface
         if (isset($options['verify_peer'])) {
             $client->setRequiredSsl((bool) $options['verify_peer']);
         }
+        // Symfony's timeout limits idle time, Swoole's the whole request
+        if (isset($options['timeout'])) {
+            $client->setTimeout((float) $options['timeout']);
+        }
 
         $response = new SwooleResponse($client->execute());
         if (is_array(self::$clients)) {

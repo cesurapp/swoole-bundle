@@ -85,6 +85,32 @@ class ClientBridgeTest extends KernelTestCase
         $scheduler->start();
     }
 
+    public function testClientTimeout(): void
+    {
+        /** @var SwooleBridge $bridge */
+        $bridge = self::getContainer()->get('http_client');
+
+        $scheduler = new Scheduler();
+        $scheduler->add(function () use ($bridge) {
+            $this->assertSame(10, SwooleClient::create('http://127.0.0.1')->client->setting['timeout']);
+            $this->assertSame(2.5, SwooleClient::create('http://127.0.0.1')->setTimeout(2.5)->client->setting['timeout']);
+
+            // Connections wait in the backlog unaccepted, so the request is sent and never answered
+            $server = new Coroutine\Socket(AF_INET, SOCK_STREAM);
+            $server->bind('127.0.0.1');
+            $server->listen();
+
+            // Symfony's own option, through the bridge
+            $started = microtime(true);
+            $response = $bridge->request('GET', 'http://127.0.0.1:'.$server->getsockname()['port'], ['timeout' => 0.5]);
+            $this->assertSame(SWOOLE_HTTP_CLIENT_ESTATUS_REQUEST_TIMEOUT, $response->getStatusCode());
+            $this->assertLessThan(2, microtime(true) - $started);
+
+            $server->close();
+        });
+        $scheduler->start();
+    }
+
     public function testClientStatic(): void
     {
         $scheduler = new Scheduler();

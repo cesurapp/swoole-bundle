@@ -36,7 +36,7 @@ class SwooleClient
     private array $options = [
         'method' => 'GET',
         'reconnect' => 1,
-        'timeout' => 4,
+        'timeout' => 10,
         'defer' => false,
         'keep_alive' => false,
         'websocket_mask' => false,
@@ -208,6 +208,16 @@ class SwooleClient
     public function setOptions(array $options): self
     {
         $this->client->set($options);
+
+        return $this;
+    }
+
+    /**
+     * Seconds the whole request may take, connect and response included (10 by default). -1 waits without limit.
+     */
+    public function setTimeout(float $seconds): self
+    {
+        $this->client->set(['timeout' => $seconds]);
 
         return $this;
     }
