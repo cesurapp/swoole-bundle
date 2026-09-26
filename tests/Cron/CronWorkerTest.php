@@ -2,6 +2,7 @@
 
 namespace Cesurapp\SwooleBundle\Tests\Cron;
 
+use Cesurapp\SwooleBundle\Cron\AbstractCronJob;
 use Cesurapp\SwooleBundle\Cron\CronScheduler;
 use Cesurapp\SwooleBundle\Cron\CronWorker;
 use Cesurapp\SwooleBundle\Tests\_App\Cron\AcmeCron;
@@ -11,6 +12,8 @@ use Swoole\Process;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Console\Tester\CommandTester;
+use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\Lock\LockFactory;
 
 class CronWorkerTest extends KernelTestCase
 {
@@ -45,6 +48,30 @@ class CronWorkerTest extends KernelTestCase
 
         $this->assertTrue(str_contains(json_encode($logger->getLogs()), 'Cron Job Process:'));
         $this->assertTrue(str_contains(json_encode($logger->getLogs()), 'Cron Job Finish:'));
+    }
+
+    /** The exception goes along as context, so the log line carries its trace and not only its message. */
+    public function testCronFailureLogsTheException(): void
+    {
+        $exception = new \RuntimeException('acme cron exception');
+        $cron = new class ($exception) extends AbstractCronJob {
+            public function __construct(private readonly \Throwable $exception)
+            {
+            }
+
+            public function __invoke(): void
+            {
+                throw $this->exception;
+            }
+        };
+        $logger = self::getContainer()->get('logger');
+        $logger->enableDebug();
+        $worker = new CronWorker(new ServiceLocator([$cron::class => static fn () => $cron]), $logger, self::getContainer()->get(LockFactory::class));
+
+        $worker->execute($cron::class, new \DateTimeImmutable('-1 minute'));
+
+        $failed = array_find($logger->getLogs(), static fn (array $log) => str_starts_with($log['message'], 'Cron Job Failed:'));
+        $this->assertSame($exception, $failed['context']['exception'] ?? null);
     }
 
     public function testSchedulerRunsDueJobOncePerMinute(): void

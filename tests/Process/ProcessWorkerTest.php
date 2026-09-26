@@ -8,6 +8,7 @@ use Cesurapp\SwooleBundle\Tests\Kernel;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\Lock\LockFactory;
+use Symfony\Component\Lock\PersistingStoreInterface;
 
 class ProcessWorkerTest extends KernelTestCase
 {
@@ -52,6 +53,24 @@ class ProcessWorkerTest extends KernelTestCase
         $worker->lockRelease();
         $this->assertTrue($nextCopy->lockAcquire(ExampleProcessJob::class));
         $nextCopy->lockRelease();
+    }
+
+    /** The exception goes along as context, so the log line carries its trace and not only its message. */
+    public function testLockReleaseFailureLogsTheException(): void
+    {
+        $exception = new \RuntimeException('store is down');
+        $store = $this->createStub(PersistingStoreInterface::class);
+        $store->method('delete')->willThrowException($exception);
+        $logger = self::getContainer()->get('logger');
+        $logger->enableDebug();
+        $worker = new ProcessWorker(new ServiceLocator([]), $logger, new LockFactory($store));
+
+        $this->assertTrue($worker->lockAcquire(ExampleProcessJob::class));
+        $worker->lockRelease();
+
+        // Lock::release() wraps the store's exception.
+        $failed = array_find($logger->getLogs(), static fn (array $log) => str_starts_with($log['message'], 'Process lock release failed:'));
+        $this->assertSame($exception, ($failed['context']['exception'] ?? null)?->getPrevious());
     }
 
     public function testGetAllProcesses(): void

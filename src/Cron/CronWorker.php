@@ -53,7 +53,7 @@ class CronWorker
             $cron();
             $this->logger->info('Cron Job Finish: '.$cronClass);
         } catch (\Throwable $exception) {
-            $this->logger->error(sprintf('Cron Job Failed: %s, exception: %s', $cronClass, $exception->getMessage()));
+            $this->logger->error(sprintf('Cron Job Failed: %s, exception: %s', $cronClass, $exception->getMessage()), ['exception' => $exception]);
         } finally {
             // Expire a second early, so the next minute's run finds the lock free.
             $hold = $slot->modify('+1 minute')->getTimestamp() - time() - 1;
@@ -61,7 +61,7 @@ class CronWorker
             try {
                 $hold > 0 ? $lock->refresh($hold) : $lock->release();
             } catch (\Throwable $exception) {
-                $this->logger->warning(sprintf('Cron Job Lock: %s, exception: %s', $cronClass, $exception->getMessage()));
+                $this->logger->warning(sprintf('Cron Job Lock: %s, exception: %s', $cronClass, $exception->getMessage()), ['exception' => $exception]);
             }
         }
     }

@@ -59,7 +59,7 @@ class ProcessWorker
             try {
                 $lock->refresh($this->lockTimeout);
             } catch (\Throwable $exception) {
-                $this->logger->error(sprintf('Process lock lost: %s, exception: %s', $processClass, $exception->getMessage()));
+                $this->logger->error(sprintf('Process lock lost: %s, exception: %s', $processClass, $exception->getMessage()), ['exception' => $exception]);
                 Process::kill($processPid ?? getmypid());
 
                 return;
@@ -77,7 +77,7 @@ class ProcessWorker
             try {
                 $lock->release();
             } catch (\Throwable $exception) {
-                $this->logger->warning(sprintf('Process lock release failed: %s, exception: %s', $processClass, $exception->getMessage()));
+                $this->logger->warning(sprintf('Process lock release failed: %s, exception: %s', $processClass, $exception->getMessage()), ['exception' => $exception]);
             }
         }
 
@@ -127,7 +127,7 @@ class ProcessWorker
                 $process();
                 $this->logger->info('Process finished: '.$processClass);
             } catch (\Throwable $exception) {
-                $this->logger->error(sprintf('Process failed: %s, exception: %s', $processClass, $exception->getMessage()));
+                $this->logger->error(sprintf('Process failed: %s, exception: %s', $processClass, $exception->getMessage()), ['exception' => $exception]);
             }
 
             if ($process->RESTART) {

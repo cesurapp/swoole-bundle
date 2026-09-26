@@ -42,7 +42,7 @@ class TaskWorker
             $this->store($taskRequest, fn () => null === $id
                 ? $this->failedTaskRepo->createTask($taskRequest, $exception, $retryAt)
                 : $this->failedTaskRepo->fail($id, $attempt, $exception, $retryAt));
-            $this->logger->critical('Failed Task: '.$taskRequest['class'].' Exception: '.$exception->getMessage(), $taskRequest);
+            $this->logger->critical('Failed Task: '.$taskRequest['class'].' Exception: '.$exception->getMessage(), [...$taskRequest, 'exception' => $exception]);
 
             return;
         }
@@ -74,7 +74,7 @@ class TaskWorker
         try {
             $write();
         } catch (\Throwable $exception) {
-            $this->logger->critical('Task store write failed: '.($taskRequest['class'] ?? '?').' Exception: '.$exception->getMessage(), $taskRequest);
+            $this->logger->critical('Task store write failed: '.($taskRequest['class'] ?? '?').' Exception: '.$exception->getMessage(), [...$taskRequest, 'exception' => $exception]);
         }
     }
 

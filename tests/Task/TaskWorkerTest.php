@@ -68,7 +68,10 @@ class TaskWorkerTest extends KernelTestCase
         $this->initDatabase(self::$kernel ?? self::bootKernel());
         $worker->handle(['class' => AcmeFailedTask::class, 'payload' => serialize('AcmeData')]);
 
-        $this->assertTrue(str_contains(json_encode($logger->getLogs()), 'Failed Task:'));
+        // The request stays the context, and the exception goes along for its trace.
+        $failed = array_find($logger->getLogs(), static fn (array $log) => str_starts_with($log['message'], 'Failed Task:'));
+        $this->assertSame(AcmeFailedTask::class, $failed['context']['class'] ?? null);
+        $this->assertSame('acme task exception', ($failed['context']['exception'] ?? null)?->getMessage());
     }
 
     /** A first failure is stored at rest, as run 1, waiting for FailedTaskCron. */
@@ -175,15 +178,17 @@ class TaskWorkerTest extends KernelTestCase
     /** handle() runs in Swoole's task callback: a store that cannot be written must not take it down. */
     public function testAStoreErrorNeverEscapes(): void
     {
+        $exception = new \RuntimeException('database is down');
         $store = $this->createMock(FailedTaskRepository::class);
-        $store->expects($this->once())->method('createTask')->willThrowException(new \RuntimeException('database is down'));
+        $store->expects($this->once())->method('createTask')->willThrowException($exception);
         $logger = self::getContainer()->get('logger');
         $logger->enableDebug();
         $worker = new TaskWorker(new ServiceLocator([AcmeFailedTask::class => static fn () => new AcmeFailedTask()]), $logger, $store);
 
         $worker->handle(['class' => AcmeFailedTask::class, 'payload' => serialize('AcmeData')]);
 
-        $this->assertStringContainsString('Task store write failed', json_encode($logger->getLogs()));
+        $failed = array_find($logger->getLogs(), static fn (array $log) => str_starts_with($log['message'], 'Task store write failed'));
+        $this->assertSame($exception, $failed['context']['exception'] ?? null);
     }
 
     /**
