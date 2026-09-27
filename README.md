@@ -219,6 +219,8 @@ Process Worker allows you to create continuously running tasks in a separate pro
 - Enable/Disable support
 - One running copy across instances (lock), with the other instances on standby as failover
 - Can dispatch tasks like any worker
+- Graceful stop: with `$STOP_TIMEOUT` set, a SIGTERM lets the job finish the work in hand
+  (`isStopping()`, `pause()`) before the process ends
 
 **Configuration:**
 ```yaml

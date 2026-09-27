@@ -140,8 +140,32 @@ Alternative: Implement `ProcessInterface` directly instead of extending `Abstrac
 - Auto-restart of the job controlled by `$RESTART` and `$RESTART_DELAY`
 - Set `$RESTART = false` for one-time initialization tasks — the finished process stays parked
   (exiting would only make the server restart it and run the job again)
+- A stop (SIGTERM: server shutdown, deploy) ends the process at once by default. A job that must not
+  be cut mid-work sets `$STOP_TIMEOUT` (seconds): on SIGTERM it sees `isStopping()`, finishes the work
+  in hand and returns from `__invoke()`; the process then ends, with the lock released — or when the
+  time is up. The lock stays held meanwhile. The server waits for the process, so the timeout only has
+  to fit in the container's stop grace period. Wait between rounds with `$this->pause($seconds)`
+  instead of `Coroutine::sleep()`: a stop cuts it short, and it returns false then
 - Services are dependency-injected via constructor — and the constructor runs in the master process,
   so open connections in `__invoke()`, never earlier
+
+**Graceful stop:**
+
+```php
+class QueueProcess extends AbstractProcessJob
+{
+    public bool $RESTART = true;
+    public int $STOP_TIMEOUT = 30;    // Seconds to finish the round in hand on SIGTERM
+
+    public function __invoke(): void
+    {
+        while (!$this->isStopping()) {
+            $this->round();           // Never cut half-way by a deploy
+            $this->pause(5);          // Ends early on a stop
+        }
+    }
+}
+```
 
 **Naming convention:** Suffix with `Process` (e.g., `RedisListenerProcess`)
 

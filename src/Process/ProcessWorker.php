@@ -28,6 +28,12 @@ class ProcessWorker
     /** @var array<SharedLockInterface> */
     private array $locks = [];
 
+    /** The job this process runs, once it has the lock. */
+    private ?AbstractProcessJob $job = null;
+
+    /** Whether the job is inside __invoke() right now (not between two runs). */
+    private bool $running = false;
+
     public function __construct(private readonly ServiceLocator $locator, private readonly LoggerInterface $logger, private readonly LockFactory $lockFactory)
     {
     }
@@ -121,13 +127,25 @@ class ProcessWorker
         // Run Process
         /** @var AbstractProcessJob $process */
         $process = $this->locator->get($processClass);
+        $this->job = $process;
         do {
             try {
                 $this->logger->info('Process started: '.$processClass);
+                $this->running = true;
                 $process();
                 $this->logger->info('Process finished: '.$processClass);
             } catch (\Throwable $exception) {
                 $this->logger->error(sprintf('Process failed: %s, exception: %s', $processClass, $exception->getMessage()), ['exception' => $exception]);
+            } finally {
+                $this->running = false;
+            }
+
+            // Asked to stop, and the job has wound down: end here, with the lock released.
+            if ($process->isStopping()) {
+                $this->logger->info('Process stopped gracefully: '.$processClass);
+                $this->exit();
+
+                return;
             }
 
             if ($process->RESTART) {
@@ -146,13 +164,39 @@ class ProcessWorker
     }
 
     /**
-     * Ends the process on SIGTERM, with its locks released.
+     * SIGTERM. A job that asks for it (STOP_TIMEOUT) and is running is told to wind down and given
+     * that long; run() ends the process once the job returns, and a timer ends it when time is up.
+     * The lock stays held meanwhile, so no standby copy starts beside the finishing one. Otherwise —
+     * no job yet (standby), between two runs, no STOP_TIMEOUT, or a second SIGTERM — it ends at once.
+     *
+     * The server's manager waits for the process to exit, so the wind-down only has to fit in the
+     * container's stop grace period.
      */
     private function stop(): void
     {
+        $job = $this->job;
+        if (null === $job || !$this->running || $job->STOP_TIMEOUT <= 0 || $job->isStopping()) {
+            $this->exit();
+
+            return;
+        }
+
+        $this->logger->info(sprintf('Process stopping, %d seconds to finish: %s', $job->STOP_TIMEOUT, $job::class));
+        $job->stop();
+        Timer::after($job->STOP_TIMEOUT * 1000, function () use ($job): void {
+            $this->logger->warning(sprintf('Process did not finish in %d seconds, stopped: %s', $job->STOP_TIMEOUT, $job::class));
+            $this->exit();
+        });
+    }
+
+    /**
+     * Ends the process, with its locks released.
+     */
+    private function exit(): void
+    {
         $this->lockRelease();
 
-        // The job's coroutine is still asleep: end the loop without Swoole reporting a deadlock.
+        // The job's coroutine may still be asleep: end the loop without Swoole reporting a deadlock.
         Coroutine::set(['enable_deadlock_check' => false]);
         Timer::clearAll();
         Event::exit();
