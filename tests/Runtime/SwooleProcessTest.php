@@ -10,7 +10,8 @@ class SwooleProcessTest extends TestCase
     public function testTheTaskBrokerFilesAreInVar(): void
     {
         $this->assertSame('/app/var/task-broker.sock', SwooleProcess::taskSocket('/app'));
-        $this->assertSame('/app/var/queue.log', SwooleProcess::taskLog('/app/'));
+        $this->assertSame('/app/var/durable', SwooleProcess::durableDir('/app/'));
+        $this->assertSame('/app/var/durable/queue.log', SwooleProcess::taskLog('/app/'));
     }
 
     /** A unix socket path has a length limit: a long one goes to the temp directory, the same each time. */

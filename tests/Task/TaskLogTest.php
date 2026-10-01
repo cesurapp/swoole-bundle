@@ -105,6 +105,19 @@ class TaskLogTest extends TaskTestCase
         $this->assertSame([$this->id('x') => 'X'], $this->log()->open());
     }
 
+    /** var/durable/ is a volume's mount point at most: the broker makes the directory itself. */
+    public function testOpenMakesItsDirectory(): void
+    {
+        $path = $this->path('durable/queue.log');
+        $log = new TaskLog($path, 10000, new NullLogger(), static fn () => null);
+
+        $this->assertSame([], $log->open());
+        $this->assertFileExists($path);
+        $log->close();
+        unlink($path);
+        rmdir(dirname($path));
+    }
+
     public function testAnAppendThatCannotBeWrittenFails(): void
     {
         $this->assertFalse(TaskLog::append($this->path('missing/queue.log'), $this->id('x'), 'X'));

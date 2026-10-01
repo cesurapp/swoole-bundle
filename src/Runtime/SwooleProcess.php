@@ -35,11 +35,21 @@ class SwooleProcess
     }
 
     /**
+     * Files that must outlive the container: the only part of var/ to keep on a volume. The rest of
+     * var/ belongs to one image (the compiled container, caches, swoole.pid): carried over a deploy,
+     * the new code would boot with the old container.
+     */
+    public static function durableDir(string $rootDir): string
+    {
+        return rtrim($rootDir, '/').'/var/durable';
+    }
+
+    /**
      * The task broker's queue: the tasks still waiting survive a restart in it.
      */
     public static function taskLog(string $rootDir): string
     {
-        return rtrim($rootDir, '/').'/var/queue.log';
+        return self::durableDir($rootDir).'/queue.log';
     }
 
     /**

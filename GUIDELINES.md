@@ -182,14 +182,17 @@ Tasks are asynchronous background jobs, run by the task executors.
 
 **Task workers:** Swoole's task workers are not used — they share `max_wait_time` with the HTTP
 workers, which cut long tasks off. A **task broker** process takes every dispatched task, writes it to
-`var/queue.log` and hands it to one of `worker_num` **executor** processes, each running up to
+`var/durable/queue.log` and hands it to one of `worker_num` **executor** processes, each running up to
 `concurrency` tasks in coroutines. Both are server-managed processes (`addProcess`), out of
 `max_wait_time`'s reach.
 
-- Waiting tasks survive a restart, a crash or a deploy in `var/queue.log` (keep `var/` on a volume).
+- Waiting tasks survive a restart or a crash in `var/durable/queue.log`, and a deploy when
+  `var/durable/` is on a volume. Mount only that directory, never all of `var/`: the compiled
+  container cache and `swoole.pid` belong to one image. One server per directory (two brokers on one
+  `queue.log` corrupt it); writable by the app user, on a local disk.
 - Each process (HTTP worker, executor, cron run) keeps one connection to the broker; its coroutines
   take turns on it. A broker that is restarting, or does not read within half a second, gets the
-  task through `var/queue.log` instead.
+  task through `var/durable/queue.log` instead.
 - An executor runs for as long as it stays under `max_memory`. Once a task leaves it above that, it
   takes no more tasks, finishes the running ones and exits; the server starts a new one.
 - Whenever an executor takes a task it arms a kernel alarm for `max_execution_time` seconds; while it
@@ -255,10 +258,10 @@ class OrderController
 
 **Where a dispatched task runs:** handed to the broker from HTTP workers, cron, process workers and
 tasks alike; `dispatch()` never waits for it. When the broker can't be reached (it is restarting), the
-task is appended to `var/queue.log` instead and the broker picks it up — it never runs in the caller.
+task is appended to `var/durable/queue.log` instead and the broker picks it up — it never runs in the caller.
 In the test environment and with `task_sync_mode` every task runs inline.
 
-**Durable tasks:** Waiting tasks survive in `var/queue.log`, but a task that is running when its
+**Durable tasks:** Waiting tasks survive in `var/durable/queue.log`, but a task that is running when its
 executor dies (hung, crashed, cut off by a stop) is gone. Pass `durable: true` when the work must
 survive that:
 

@@ -150,11 +150,16 @@ bundle adds to the server itself (`Server::addProcess`), which Swoole never relo
 applies to the HTTP workers only.
 
 - **Task broker**, one process: takes every dispatched task without making the caller wait, writes it
-  to `var/queue.log` and hands it to an executor. Waiting tasks survive a restart, a crash or a deploy:
+  to `var/durable/queue.log` and hands it to an executor. Waiting tasks survive a restart, a crash or a deploy:
   the broker reads them back on start. Each process (HTTP worker, executor, cron run) keeps one
   connection to it for all its tasks. When the broker can't be reached (it is restarting) or does not
-  read within half a second, a task is appended to `var/queue.log` directly and the broker picks it
-  up. In Docker keep `var/` on a volume.
+  read within half a second, a task is appended to `var/durable/queue.log` directly and the broker
+  picks it up.
+- **Deploys:** to keep the waiting tasks across a deploy, put only `var/durable/` on a volume, never
+  all of `var/`: its compiled container cache and `swoole.pid` belong to one image, and the new code
+  would boot with the old container. A server needs a directory of its own (two brokers on one
+  `queue.log` corrupt it: no replicas, nor a deploy that starts the new container before the old one
+  stops, on one volume). It must be writable by the app user, on a local disk.
 - **Executors**, `WORKER_NUM` processes: each runs up to `CONCURRENCY` tasks at once, in coroutines.
   An executor runs for as long as it stays under `MAX_MEMORY`. When a task leaves it above that, it
   takes no more tasks, lets the running ones finish and exits, and the server starts a new one.
@@ -167,7 +172,7 @@ applies to the HTTP workers only.
 - **EntityManager:** a failed flush closes the EntityManager. A closed one is reset before the next
   task starts, so one task's failure does not fail the ones after it.
 - **Server stop:** the HTTP workers end first (up to `max_wait_time`), then the executors have
-  `SHUTDOWN_GRACE` seconds to finish their tasks. Waiting tasks stay in `var/queue.log`.
+  `SHUTDOWN_GRACE` seconds to finish their tasks. Waiting tasks stay in `var/durable/queue.log`.
 - A task that dies with its executor (hung, crashed, cut off by a stop) does not run again, unless it
   is durable.
 - Keep PHP's `memory_limit` at least twice `MAX_MEMORY`, or -1.
@@ -229,7 +234,7 @@ class ExampleController
 
 Durable Task:
 
-Waiting tasks survive a restart in `var/queue.log`, but a task that dies with its executor is lost.
+Waiting tasks survive a restart in `var/durable/queue.log`, but a task that dies with its executor is lost.
 Pass `durable: true` for work that must survive a deploy or a crash. The task is written to the
 `failed_task` store before it is queued, and its row is deleted only once the task succeeds.
 `FailedTaskCron` runs it again after a failure (on the `task_retry` schedule) and after
