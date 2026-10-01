@@ -16,21 +16,29 @@ use Swoole\Timer;
  *
  * Swoole's max_wait_time does not reach these processes (they are never reloaded and have no
  * max_request), so a task may run for as long as it needs. An executor guards itself instead:
- *  - it starts afresh after `lifetime` seconds (up to a fifth earlier, so the executors do not all
- *    go at once), and once a task leaves it holding more than `max_memory`: it stops taking tasks,
- *    lets the running ones finish and exits, and the manager starts a new one;
- *  - a kernel alarm kills it `lifetime` × 1.2 seconds after its start, wherever it is stuck — in a
- *    PHP loop or in a blocking call — so a hung task cannot hold it forever;
+ *  - once a task leaves it holding more than `max_memory`, it stops taking tasks, lets the running
+ *    ones finish and exits, and the manager starts a new one. It runs for as long as that takes;
+ *  - a kernel alarm, set to `max_execution_time` seconds whenever it takes a task and off while it
+ *    runs none, kills it wherever it is stuck — in a PHP loop or in a blocking call. Every task gets
+ *    at least that long from its start; an executor that runs tasks but takes none for that long
+ *    is taken as hung;
+ *  - it pings the broker every second, so a frozen one gets no more tasks (TaskBroker);
  *  - on a server stop it drains the same way, with at most `shutdown_grace` seconds left on the
  *    alarm.
  */
 class TaskExecutor
 {
+    /** Seconds between two pings to the broker. */
+    private const int PING_INTERVAL = 1;
+
     private ?TaskLink $link = null;
 
     private int $running = 0;
 
     private bool $draining = false;
+
+    /** SIGTERM came: the alarm is never put off again, nor turned off. */
+    private bool $stopping = false;
 
     private ?bool $proc = null;
 
@@ -43,12 +51,11 @@ class TaskExecutor
      */
     public function run(): void
     {
-        $this->guard((int) ceil($this->settings->lifetime * 1.2));
         $this->signals();
         $this->checkMemoryLimit();
 
-        $lifetime = $this->settings->lifetime * (1 - mt_rand(0, 200) / 1000);
-        $timer = Timer::after(max(1, (int) ($lifetime * 1000)), fn () => $this->drain(sprintf('its lifetime of %d seconds is over', $lifetime)));
+        // A frozen executor stops pinging: a timer only fires while the process runs.
+        $ping = Timer::tick(self::PING_INTERVAL * 1000, fn () => $this->link?->send(TaskFrame::encode(TaskFrame::PING)));
 
         // A brake on a crash loop: the manager restarts an executor at once.
         Coroutine::sleep($this->delay());
@@ -76,7 +83,7 @@ class TaskExecutor
             Coroutine::sleep(0.05);
         }
 
-        Timer::clear($timer);
+        Timer::clear($ping);
         $this->exit();
     }
 
@@ -85,23 +92,28 @@ class TaskExecutor
      */
     public function shutdown(): void
     {
-        $this->guard($this->settings->shutdownGrace, true);
+        $this->stopping = true;
+
+        // Brought forward, never put off: with less time left, that time stays.
+        $grace = $this->settings->shutdownGrace;
+        $left = $this->alarm($grace);
+        if ($left > 0 && $left < $grace) {
+            $this->alarm($left);
+        }
+
         $this->drain('the server stops');
     }
 
     /**
-     * Arms the kernel alarm. SIGALRM with its default action ends the process wherever it is; PHP's
-     * own handler would only end a running PHP loop.
-     *
-     * @param bool $sooner only bring an armed alarm forward, never put it off
+     * Arms the kernel alarm for $seconds, 0 turns it off, and returns the seconds the previous one had
+     * left. SIGALRM with its default action ends the process wherever it is; PHP's own handler would
+     * only end a running PHP loop.
      */
-    protected function guard(int $seconds, bool $sooner = false): void
+    protected function alarm(int $seconds): int
     {
         pcntl_signal(SIGALRM, SIG_DFL);
-        $left = pcntl_alarm(max(1, $seconds));
-        if ($sooner && $left > 0 && $left < $seconds) {
-            pcntl_alarm($left);
-        }
+
+        return pcntl_alarm($seconds);
     }
 
     protected function signals(): void
@@ -170,6 +182,11 @@ class TaskExecutor
         while (null !== ($frame = $link->receive())) {
             [$type, $body] = $frame;
             if (TaskFrame::TASK === $type) {
+                // Every task gets max_execution_time from its start; a stop's grace is never put off.
+                if (!$this->stopping) {
+                    $this->alarm($this->settings->maxExecutionTime);
+                }
+
                 ++$this->running;
                 Coroutine::create(fn () => $this->execute($body));
             } elseif (TaskFrame::DRAIN === $type) {
@@ -194,6 +211,11 @@ class TaskExecutor
             $this->logger->critical('Task executor failed: '.$exception->getMessage(), ['exception' => $exception]);
         } finally {
             --$this->running;
+
+            // Running nothing, it cannot hang: an idle executor is never killed.
+            if (0 === $this->running && !$this->stopping) {
+                $this->alarm(0);
+            }
         }
 
         if ($this->draining) {

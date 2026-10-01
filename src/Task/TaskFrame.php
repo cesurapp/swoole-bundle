@@ -24,6 +24,9 @@ final class TaskFrame
     /** Executor → broker: draining, send no more. Broker → executor: acknowledged, nothing follows. */
     public const string DRAIN = 'X';
 
+    /** Executor → broker, every second: still answering. One that goes quiet gets no more tasks. */
+    public const string PING = 'P';
+
     /** queue.log: a job arrived (id + serialized request). */
     public const string ADDED = 'A';
 

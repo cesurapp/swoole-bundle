@@ -3,6 +3,8 @@
 namespace Cesurapp\SwooleBundle\Task;
 
 use Cesurapp\SwooleBundle\Repository\FailedTaskRepository;
+use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\Persistence\ManagerRegistry;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
@@ -16,6 +18,7 @@ class TaskWorker
         private readonly LoggerInterface $logger,
         private readonly FailedTaskRepository $failedTaskRepo,
         private readonly array $retry = [600],
+        private readonly ?ManagerRegistry $doctrine = null,
     ) {
     }
 
@@ -26,6 +29,7 @@ class TaskWorker
     public function handle(array $taskRequest): void
     {
         $id = $taskRequest['id'] ?? null;
+        $this->reopenEntityManagers();
 
         // \Exception değil \Throwable: görevin attığı bir TypeError/Error yakalanmazsa
         // task worker'ı 255 ile ölüyor, ardından Swoole "No idle task worker is
@@ -51,6 +55,22 @@ class TaskWorker
             $this->store($taskRequest, fn () => $this->failedTaskRepo->complete($id));
         }
         $this->logger->info('Success Task: '.$taskRequest['class'], $taskRequest);
+    }
+
+    /**
+     * A failed flush closes the EntityManager, and a closed one stays closed: every later task in this
+     * process would fail on it, whether the task that closed it threw or swallowed the error. A closed
+     * one is reset before the next task starts — in place, so the services holding it see the new one.
+     * An open one is left alone: it is not cleared, as the tasks running beside this one use it.
+     */
+    private function reopenEntityManagers(): void
+    {
+        foreach ($this->doctrine?->getManagers() ?? [] as $name => $manager) {
+            if ($manager instanceof EntityManagerInterface && !$manager->isOpen()) {
+                $this->doctrine->resetManager($name);
+                $this->logger->info(sprintf('Task worker: the "%s" EntityManager was closed, it is reset', $name));
+            }
+        }
     }
 
     /**

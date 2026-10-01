@@ -126,7 +126,7 @@ class HttpServer
             }.PHP_EOL;
             echo 'Log File     => '.($this->options['http']['settings']['log_file'] ?? 'STDOUT').PHP_EOL;
             echo 'Max Request  => '.($this->options['http']['settings']['max_request'] ?? 0).' Req'.PHP_EOL;
-            echo 'Task Lifetime => '.($task['lifetime'] ?? 0).' sec'.PHP_EOL;
+            echo 'Task Max Time => '.($task['max_execution_time'] ?? 0).' sec'.PHP_EOL;
             echo 'Task Memory  => '.($task['max_memory'] ?? 0).' MB'.PHP_EOL;
             echo 'Max WaitTime => '.($this->options['http']['settings']['max_wait_time'] ?? 30).' sec'.PHP_EOL;
             echo PHP_EOL;

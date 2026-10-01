@@ -112,6 +112,28 @@ class TaskBrokerTest extends TaskTestCase
         $this->assertSame([TaskFrame::TASK, serialize($this->request('a'))], $frame);
     }
 
+    /**
+     * An executor that says nothing for a while — frozen, or held up by a blocking call — gets no
+     * tasks until it answers: what it was sent would be lost with it.
+     */
+    public function testAQuietExecutorGetsNoTasksUntilItAnswers(): void
+    {
+        $frames = [];
+
+        $this->coroutine(function () use (&$frames) {
+            $this->startBroker(impatient: true);
+            $executor = $this->connect(5);
+            Coroutine::sleep(2.5);
+
+            new TaskBrokerClient($this->settings())->send($this->request('a'));
+            $frames[] = $this->next($executor, 0.5);
+            $executor->sendAll(TaskFrame::encode(TaskFrame::PING));
+            $frames[] = $this->next($executor);
+        });
+
+        $this->assertSame([null, [TaskFrame::TASK, serialize($this->request('a'))]], $frames);
+    }
+
     /** A producer that could not reach the broker appended to queue.log: picked up within a second. */
     public function testAProducersAppendIsDealtOut(): void
     {

@@ -10,7 +10,7 @@ use Swoole\Timer;
 /**
  * Takes the tasks from everything that dispatches them and deals them out to the task executors.
  * It is one server-managed process (TaskServer) that only moves bytes, so a producer never waits
- * on it: it connects, writes its job and goes.
+ * on it: it writes its job on its connection and goes.
  *
  * Each job goes to queue.log as it arrives, and is marked there once an executor has it (TaskLog):
  * a crash, a restart or a server stop loses nothing that was waiting, the next start picks it up.
@@ -20,14 +20,21 @@ use Swoole\Timer;
  * Executors pull: each says how many tasks it runs at once, and asks for one more as each one
  * finishes. One that drains says so (TaskFrame::DRAIN) and gets an acknowledgement after the last
  * task sent to it, so nothing marked as handed over is left unread on its socket.
+ *
+ * An executor pings every second. One that goes quiet for SILENCE seconds — frozen, or held up by a
+ * blocking call — gets no more tasks until it answers again: what is sent to a frozen executor is
+ * lost with it, and a blocked one could not start it anyway.
  */
 class TaskBroker
 {
-    /** Seconds a new connection has to send its first frame, and a producer its next one. */
+    /** Seconds a new connection has to send its first frame. */
     private const float READ_TIMEOUT = 5.0;
 
     /** Seconds between two looks at queue.log for the producers' own appends. */
     private const int POLL_INTERVAL = 1;
+
+    /** Seconds an executor may go without a word before it gets no more tasks. */
+    protected const float SILENCE = 3.0;
 
     private TaskQueue $queue;
 
@@ -37,6 +44,9 @@ class TaskBroker
 
     /** @var array<int, TaskLink> executor links by key */
     private array $links = [];
+
+    /** @var array<int, float> when each executor link was last heard from */
+    private array $heard = [];
 
     /** @var array<int, Socket> every open connection, closed on stop */
     private array $connections = [];
@@ -83,6 +93,7 @@ class TaskBroker
 
         $this->timer = Timer::tick(self::POLL_INTERVAL * 1000, function (): void {
             $this->log?->poll();
+            $this->watch();
             $this->pump();
         });
 
@@ -191,13 +202,14 @@ class TaskBroker
     }
 
     /**
-     * A producer's connection: one job, usually, then the end.
+     * A producer's connection: a job per frame, for as long as it stays open. Each process keeps one
+     * (TaskBrokerClient), so it may sit idle between two jobs.
      */
     private function produce(Socket $socket, string $body): void
     {
         do {
             $this->take($body);
-            $frame = $socket->recvPacket(self::READ_TIMEOUT);
+            $frame = $socket->recvPacket(-1);
             [$type, $body] = is_string($frame) && '' !== $frame ? TaskFrame::decode($frame) : ['', ''];
         } while (TaskFrame::JOB === $type);
     }
@@ -228,12 +240,14 @@ class TaskBroker
         );
         $key = spl_object_id($link);
         $this->links[$key] = $link;
+        $this->heard[$key] = microtime(true);
         $this->queue->credit($key, $credit);
         $this->pump();
 
         try {
             while (null !== ($frame = $link->receive())) {
                 [$type, $body] = $frame;
+                $this->hear($key);
                 if (TaskFrame::READY === $type) {
                     $this->queue->credit($key, TaskFrame::count($body));
                     $this->pump();
@@ -244,11 +258,36 @@ class TaskBroker
             }
         } finally {
             $this->queue->close($key);
-            unset($this->links[$key]);
+            unset($this->links[$key], $this->heard[$key]);
 
             // The tasks it never got come back through requeue().
             $link->close();
             $this->pump();
+        }
+    }
+
+    /**
+     * An executor spoke: one that had gone quiet gets tasks again.
+     */
+    private function hear(int $key): void
+    {
+        $this->heard[$key] = microtime(true);
+        if ($this->queue->resume($key)) {
+            $this->logger->info('Task executor answers again, it gets tasks again');
+            $this->pump();
+        }
+    }
+
+    /**
+     * Executors quiet for longer than SILENCE get no more tasks until they answer.
+     */
+    private function watch(): void
+    {
+        $now = microtime(true);
+        foreach ($this->heard as $key => $at) {
+            if ($now - $at > static::SILENCE && $this->queue->pause($key)) {
+                $this->logger->warning(sprintf('Task executor quiet for %d seconds (frozen, or held up by a blocking call): no more tasks until it answers', $now - $at));
+            }
         }
     }
 

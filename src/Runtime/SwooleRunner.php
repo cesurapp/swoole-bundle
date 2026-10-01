@@ -49,7 +49,7 @@ class SwooleRunner implements RunnerInterface
                 'worker_num' => null,
                 'concurrency' => 1000,
                 'max_memory' => 200, // MB
-                'lifetime' => 600,
+                'max_execution_time' => 600,
                 'shutdown_grace' => 30,
                 'log_rotate' => 10000,
             ],

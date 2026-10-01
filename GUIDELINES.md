@@ -46,7 +46,7 @@ SERVER_HTTP_SETTINGS_HEARTBEAT_IDLE_TIME=180
 SERVER_TASK_SETTINGS_WORKER_NUM=2         # Executors, 0 = off (default: SERVER_HTTP_SETTINGS_TASK_WORKER_NUM, else CPU count / 2)
 SERVER_TASK_SETTINGS_CONCURRENCY=1000     # Tasks an executor runs at once (default: 1000)
 SERVER_TASK_SETTINGS_MAX_MEMORY=200       # MB, start afresh above it after a task, 0 = no limit (default: 200)
-SERVER_TASK_SETTINGS_LIFETIME=600         # Start afresh after it; killed at LIFETIME x 1.2 (default: 600)
+SERVER_TASK_SETTINGS_MAX_EXECUTION_TIME=600 # Seconds every task gets from its start (default: 600)
 SERVER_TASK_SETTINGS_SHUTDOWN_GRACE=30    # Seconds to finish on a server stop (default: 30)
 SERVER_TASK_SETTINGS_LOG_ROTATE=10000     # queue.log records between rewrites (default: 10000)
 ```
@@ -187,10 +187,19 @@ workers, which cut long tasks off. A **task broker** process takes every dispatc
 `max_wait_time`'s reach.
 
 - Waiting tasks survive a restart, a crash or a deploy in `var/queue.log` (keep `var/` on a volume).
-- An executor starts afresh after `lifetime` (up to 20% sooner) and once a task leaves it above
-  `max_memory`: it takes no more tasks, finishes the running ones and exits; the server starts a new one.
-- A kernel alarm kills an executor `lifetime × 1.2` seconds after its start, wherever it hangs. That
-  is the longest a task can run (12 minutes by default): raise `lifetime` above the longest task.
+- Each process (HTTP worker, executor, cron run) keeps one connection to the broker; its coroutines
+  take turns on it. A broker that is restarting, or does not read within half a second, gets the
+  task through `var/queue.log` instead.
+- An executor runs for as long as it stays under `max_memory`. Once a task leaves it above that, it
+  takes no more tasks, finishes the running ones and exits; the server starts a new one.
+- Whenever an executor takes a task it arms a kernel alarm for `max_execution_time` seconds; while it
+  runs none, the alarm is off. Every task gets at least that long from its start: set it above the
+  longest task. An executor that runs tasks but takes none for that long is taken as hung and killed,
+  wherever it is stuck (a PHP loop, a blocking call).
+- Executors ping the broker every second. One quiet for a few seconds (frozen, or held up by a
+  blocking call) gets no more tasks until it answers: what is sent to a frozen one is lost with it.
+- A failed flush closes the EntityManager. A closed one is reset (in place) before the next task; an
+  open one is never cleared between tasks, as the tasks running beside each other share it.
 - On a server stop the executors have `shutdown_grace` seconds to finish, after the HTTP workers.
 - A task that dies with its executor (hung, crashed, cut off) does not run again unless it is durable.
 - Keep `memory_limit` at least twice `max_memory` (or -1).
@@ -274,9 +283,10 @@ $this->taskHandler->dispatch(TranscribeTask::class, ['call_id' => $id], durable:
   be reached, or the dispatch sits inside an open DB transaction. Inside a transaction a worker could
   not see the row until commit, and a rollback takes the row along.
 - **Sync mode** (`task_sync_mode`, the test environment) runs the task inline and writes no row.
-- **Executor recycling.** An executor is killed `lifetime × 1.2` seconds after its start, so a durable
-  task that runs longer dies with it as well. Raise `lifetime` (`SERVER_TASK_SETTINGS_LIFETIME`)
-  above the longest one; `max_wait_time` no longer applies to tasks.
+- **Longest task.** A task still running `max_execution_time` seconds after its start, with no other
+  task taken since, is taken as hung and dies with its executor; a durable one runs again later. Set
+  `max_execution_time` (`SERVER_TASK_SETTINGS_MAX_EXECUTION_TIME`) above the longest task;
+  `max_wait_time` does not apply to tasks.
 - **No transactions across network calls.** Executors run coroutines that share one database
   connection, so never keep a transaction open across a network call.
 - **Deploy all instances together.** A release before durable tasks deletes stored rows when it
@@ -494,7 +504,7 @@ echo $client->body;
 
 **Performance constraints:**
 - `max_request` restarts workers after N requests (prevents memory leaks)
-- `lifetime` and `max_memory` restart task executors (the alarm at `lifetime × 1.2` ends a hung one)
+- `max_memory` restarts task executors; the `max_execution_time` alarm ends a hung one
 - Heartbeat closes idle connections automatically
 - Process restart delay prevents rapid restart loops
 

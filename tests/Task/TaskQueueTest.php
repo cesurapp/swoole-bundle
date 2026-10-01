@@ -71,6 +71,25 @@ class TaskQueueTest extends TestCase
         $this->assertNull($queue->assign());
     }
 
+    /** A paused link keeps its credit but gets nothing, however much room it has, until resumed. */
+    public function testAPausedLinkGetsNothingUntilResumed(): void
+    {
+        $queue = new TaskQueue();
+        $queue->credit(1, 5);
+        $queue->credit(2, 1);
+        $queue->push('a', 'A');
+        $queue->push('b', 'B');
+
+        $this->assertTrue($queue->pause(1));
+        $this->assertFalse($queue->pause(1));
+        $this->assertSame([2, 'a', 'A'], $queue->assign());
+        $this->assertNull($queue->assign());
+
+        $this->assertTrue($queue->resume(1));
+        $this->assertFalse($queue->resume(1));
+        $this->assertSame([1, 'b', 'B'], $queue->assign());
+    }
+
     public function testAJobPutBackGoesFirst(): void
     {
         $queue = new TaskQueue();

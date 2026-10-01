@@ -65,7 +65,7 @@ SERVER_HTTP_PORT=9090 # Default = 80
 #SERVER_TASK_SETTINGS_WORKER_NUM=2 # Executor processes, 0 = off -> Default = SERVER_HTTP_SETTINGS_TASK_WORKER_NUM if set, else CPU Count / 2
 #SERVER_TASK_SETTINGS_CONCURRENCY=1000 # Tasks an executor runs at once -> Default = 1000
 #SERVER_TASK_SETTINGS_MAX_MEMORY=200 # MB, executor starts afresh above it after a task, 0 = no limit -> Default = 200
-#SERVER_TASK_SETTINGS_LIFETIME=600 # Executor starts afresh after it (up to 20% sooner), killed at LIFETIME x 1.2 -> Default = 600
+#SERVER_TASK_SETTINGS_MAX_EXECUTION_TIME=600 # Seconds every task gets from its start; set it above the longest task -> Default = 600
 #SERVER_TASK_SETTINGS_SHUTDOWN_GRACE=30 # Seconds the executors have to finish on a server stop -> Default = 30
 #SERVER_TASK_SETTINGS_LOG_ROTATE=10000 # queue.log records between two rewrites -> Default = 10000
 ```
@@ -149,14 +149,21 @@ applies to the HTTP workers only.
 
 - **Task broker**, one process: takes every dispatched task without making the caller wait, writes it
   to `var/queue.log` and hands it to an executor. Waiting tasks survive a restart, a crash or a deploy:
-  the broker reads them back on start. When the broker can't be reached (it is restarting), a task is
-  appended to `var/queue.log` directly and the broker picks it up. In Docker keep `var/` on a volume.
+  the broker reads them back on start. Each process (HTTP worker, executor, cron run) keeps one
+  connection to it for all its tasks. When the broker can't be reached (it is restarting) or does not
+  read within half a second, a task is appended to `var/queue.log` directly and the broker picks it
+  up. In Docker keep `var/` on a volume.
 - **Executors**, `WORKER_NUM` processes: each runs up to `CONCURRENCY` tasks at once, in coroutines.
-  An executor starts afresh after `LIFETIME` seconds, and when a task leaves it above `MAX_MEMORY`:
-  it takes no more tasks, lets the running ones finish and exits, and the server starts a new one.
-- **Hung tasks:** a kernel alarm kills an executor `LIFETIME x 1.2` seconds after its start, wherever
-  it hangs. A task can therefore run for that long at most (12 minutes by default); raise `LIFETIME`
-  for longer ones.
+  An executor runs for as long as it stays under `MAX_MEMORY`. When a task leaves it above that, it
+  takes no more tasks, lets the running ones finish and exits, and the server starts a new one.
+- **Hung tasks:** an executor arms a kernel alarm for `MAX_EXECUTION_TIME` seconds whenever it takes a
+  task, and turns it off while it runs none. Every task gets at least that long from its start, so set
+  it above the longest task. An executor that runs tasks but takes none for that long is taken as
+  hung, and the alarm kills it wherever it is stuck: in a PHP loop or in a blocking call.
+- **Frozen executors:** each executor pings the broker every second. One that goes quiet for a few
+  seconds (frozen, or held up by a blocking call) gets no more tasks until it answers again.
+- **EntityManager:** a failed flush closes the EntityManager. A closed one is reset before the next
+  task starts, so one task's failure does not fail the ones after it.
 - **Server stop:** the HTTP workers end first (up to `max_wait_time`), then the executors have
   `SHUTDOWN_GRACE` seconds to finish their tasks. Waiting tasks stay in `var/queue.log`.
 - A task that dies with its executor (hung, crashed, cut off by a stop) does not run again, unless it

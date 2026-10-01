@@ -44,9 +44,9 @@ abstract class TaskTestCase extends TestCase
         return $this->dir.'/'.$name;
     }
 
-    protected function settings(int $concurrency = 1000, int $maxMemory = 0, int $lifetime = 600, int $logRotate = 10000): TaskSettings
+    protected function settings(int $concurrency = 1000, int $maxMemory = 0, int $maxExecutionTime = 600, int $logRotate = 10000): TaskSettings
     {
-        return new TaskSettings($this->path('b.sock'), $this->path('queue.log'), $concurrency, $maxMemory, $lifetime, 30, $logRotate);
+        return new TaskSettings($this->path('b.sock'), $this->path('queue.log'), $concurrency, $maxMemory, $maxExecutionTime, 30, $logRotate);
     }
 
     /**
@@ -78,10 +78,17 @@ abstract class TaskTestCase extends TestCase
         $this->cleanups[] = $cleanup;
     }
 
-    protected function startBroker(?TaskSettings $settings = null): TaskBroker
+    /**
+     * @param bool $impatient takes an executor quiet for 1.5 seconds as frozen, not 3
+     */
+    protected function startBroker(?TaskSettings $settings = null, bool $impatient = false): TaskBroker
     {
         $settings ??= $this->settings();
-        $broker = new TaskBroker($settings, new NullLogger());
+        $broker = $impatient
+            ? new class ($settings, new NullLogger()) extends TaskBroker {
+                protected const float SILENCE = 1.5;
+            }
+        : new TaskBroker($settings, new NullLogger());
         $this->defer(static fn () => $broker->stop());
 
         $started = microtime(true);

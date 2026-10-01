@@ -5,7 +5,8 @@ namespace Cesurapp\SwooleBundle\Task;
 /**
  * The broker's waiting jobs and its executors' room for more, without any I/O: a FIFO of jobs and
  * a credit per executor link. A link's credit is how many more tasks it takes before it says it is
- * ready again; a job goes to the link with the most, so the executors share the load.
+ * ready again; a job goes to the link with the most, so the executors share the load. A paused link
+ * keeps its credit but gets nothing until it is resumed.
  */
 final class TaskQueue
 {
@@ -20,6 +21,9 @@ final class TaskQueue
 
     /** @var array<int, true> links that drain: they get no more work, whatever they say */
     private array $revoked = [];
+
+    /** @var array<int, true> links that went quiet: no work until they answer again */
+    private array $paused = [];
 
     public function __construct()
     {
@@ -56,7 +60,31 @@ final class TaskQueue
     /** The link is gone. */
     public function close(int $link): void
     {
-        unset($this->credits[$link], $this->revoked[$link]);
+        unset($this->credits[$link], $this->revoked[$link], $this->paused[$link]);
+    }
+
+    /** The link went quiet: it keeps its credit but gets no work. False when it already was paused. */
+    public function pause(int $link): bool
+    {
+        if (isset($this->paused[$link])) {
+            return false;
+        }
+
+        $this->paused[$link] = true;
+
+        return true;
+    }
+
+    /** The link answers again. False when it was not paused. */
+    public function resume(int $link): bool
+    {
+        if (!isset($this->paused[$link])) {
+            return false;
+        }
+
+        unset($this->paused[$link]);
+
+        return true;
     }
 
     /**
@@ -67,16 +95,23 @@ final class TaskQueue
      */
     public function assign(): ?array
     {
-        if ($this->jobs->isEmpty() || [] === $this->credits) {
+        if ($this->jobs->isEmpty()) {
             return null;
         }
 
-        $credit = max($this->credits);
-        if ($credit < 1) {
+        $link = null;
+        $credit = 0;
+        foreach ($this->credits as $candidate => $room) {
+            if ($room > $credit && !isset($this->paused[$candidate])) {
+                $link = $candidate;
+                $credit = $room;
+            }
+        }
+
+        if (null === $link) {
             return null;
         }
 
-        $link = (int) array_search($credit, $this->credits, true);
         --$this->credits[$link];
         [$id, $request] = $this->jobs->shift();
 

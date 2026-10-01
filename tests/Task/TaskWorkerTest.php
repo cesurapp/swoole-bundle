@@ -175,6 +175,22 @@ class TaskWorkerTest extends KernelTestCase
         $this->assertCount(1, $this->rows());
     }
 
+    /**
+     * A failed flush in an earlier task left the EntityManager closed: it is reset before the next
+     * task starts, in place, so whoever holds it sees an open one.
+     */
+    public function testAClosedEntityManagerIsResetBeforeTheNextTask(): void
+    {
+        $this->initDatabase(self::$kernel ?? self::bootKernel());
+        $em = self::getContainer()->get('doctrine')->getManager();
+        $em->close();
+
+        self::getContainer()->get(TaskWorker::class)->handle(['class' => AcmeFailedTask::class, 'payload' => serialize('AcmeData')]);
+
+        $this->assertTrue($em->isOpen());
+        $this->assertCount(1, $this->rows());
+    }
+
     /** handle() runs in Swoole's task callback: a store that cannot be written must not take it down. */
     public function testAStoreErrorNeverEscapes(): void
     {

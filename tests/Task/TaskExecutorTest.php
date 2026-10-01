@@ -38,7 +38,7 @@ class TaskExecutorTest extends TaskTestCase
         });
 
         $this->assertEqualsCanonicalizing(['a', 'b'], $this->handled);
-        $this->assertSame([720, 30], $executor->alarms, 'killed at lifetime × 1.2, then shutdown_grace on a stop');
+        $this->assertSame([600, 0, 600, 0, 30], $executor->alarms, 'max_execution_time from each task\'s start, off while idle, shutdown_grace on a stop');
         $this->assertSame(1, $executor->exits);
     }
 
@@ -64,17 +64,43 @@ class TaskExecutorTest extends TaskTestCase
         $this->assertEqualsCanonicalizing([serialize($this->request('b')), serialize($this->request('c'))], $this->pending());
     }
 
-    public function testItDrainsWhenItsLifetimeIsOver(): void
+    /** No task, no alarm, and no end: an idle executor runs until memory or a stop ends it. */
+    public function testAnIdleExecutorRunsOnWithoutAnAlarm(): void
     {
-        $executor = $this->executor($this->settings(lifetime: 1));
+        $executor = $this->executor($this->settings());
+        $idle = null;
 
-        $this->coroutine(function () use ($executor) {
+        $this->coroutine(function () use ($executor, &$idle) {
             $this->startBroker();
-            $this->assertTrue($this->launch($executor)->pop(3));
+            $done = $this->launch($executor);
+            Coroutine::sleep(1.2);
+            $idle = [$executor->exits, $executor->alarms];
+
+            $executor->shutdown();
+            $this->assertTrue($done->pop(3));
         });
 
-        $this->assertSame([2], $executor->alarms);
-        $this->assertSame(1, $executor->exits);
+        $this->assertSame([0, []], $idle);
+    }
+
+    /** It pings the broker, which would otherwise take it as frozen and send it nothing. */
+    public function testAnExecutorThatPingsKeepsGettingTasks(): void
+    {
+        $executor = $this->executor($this->settings());
+
+        $this->coroutine(function () use ($executor) {
+            $this->startBroker(impatient: true);
+            $done = $this->launch($executor);
+            Coroutine::sleep(2.5); // quiet for longer than the broker's patience, but for its pings
+
+            new TaskBrokerClient($this->settings())->send($this->request('a'));
+            $this->assertTrue($this->waitFor(fn () => 1 === count($this->handled), 1.0));
+
+            $executor->shutdown();
+            $this->assertTrue($done->pop(3));
+        });
+
+        $this->assertSame(['a'], $this->handled);
     }
 
     /** A drain waits for the running tasks before the process ends. */
@@ -97,6 +123,7 @@ class TaskExecutorTest extends TaskTestCase
 
         $this->assertSame(['a'], $finished);
         $this->assertSame(1, $executor->exits);
+        $this->assertSame([600, 30], $executor->alarms, 'after a stop the alarm is neither put off nor turned off');
     }
 
     /** The broker restarting: the executor connects to the new one and goes on. */
@@ -129,7 +156,7 @@ class TaskExecutorTest extends TaskTestCase
 
         $pid = pcntl_fork();
         if (0 === $pid) {
-            (fn () => $this->guard(1))->call($executor);
+            (fn () => $this->alarm(1))->call($executor);
             $hang();
             exit(0);
         }
@@ -162,15 +189,15 @@ class TaskExecutorTest extends TaskTestCase
     public function testAStopOnlyBringsTheAlarmForward(): void
     {
         $executor = new TaskExecutor($this->createStub(TaskWorker::class), new NullLogger(), $this->settings());
-        $guard = fn (int $seconds, bool $sooner = false) => (fn () => $this->guard($seconds, $sooner))->call($executor);
+        $alarm = fn (int $seconds) => (fn () => $this->alarm($seconds))->call($executor);
 
         try {
-            $guard(100);
-            $guard(30, true);
+            $alarm(100);
+            $executor->shutdown();
             $this->assertSame(30, pcntl_alarm(0));
 
-            $guard(10);
-            $guard(30, true);
+            $alarm(10);
+            $executor->shutdown();
             $this->assertSame(10, pcntl_alarm(0));
         } finally {
             pcntl_alarm(0);
@@ -198,9 +225,11 @@ class TaskExecutorTest extends TaskTestCase
 
             public int $memory = 0;
 
-            protected function guard(int $seconds, bool $sooner = false): void
+            protected function alarm(int $seconds): int
             {
                 $this->alarms[] = $seconds;
+
+                return 0;
             }
 
             protected function signals(): void

@@ -13,7 +13,7 @@ use PHPUnit\Framework\TestCase;
 
 class SwooleRunnerTest extends TestCase
 {
-    private const array ENV = ['SERVER_TASK_SETTINGS_WORKER_NUM', 'SERVER_TASK_SETTINGS_LIFETIME', 'SERVER_TASK_SETTINGS_MAX_MEMORY', 'SERVER_HTTP_SETTINGS_TASK_WORKER_NUM'];
+    private const array ENV = ['SERVER_TASK_SETTINGS_WORKER_NUM', 'SERVER_TASK_SETTINGS_MAX_EXECUTION_TIME', 'SERVER_TASK_SETTINGS_MAX_MEMORY', 'SERVER_HTTP_SETTINGS_TASK_WORKER_NUM'];
 
     private array $config;
 
@@ -58,12 +58,12 @@ class SwooleRunnerTest extends TestCase
     public function testTaskSettingsComeFromTheEnv(): void
     {
         $_ENV['SERVER_TASK_SETTINGS_WORKER_NUM'] = '3';
-        $_ENV['SERVER_TASK_SETTINGS_LIFETIME'] = '1500';
+        $_ENV['SERVER_TASK_SETTINGS_MAX_EXECUTION_TIME'] = '1500';
         $_ENV['SERVER_TASK_SETTINGS_MAX_MEMORY'] = '300';
         new SwooleRunner(new Kernel('test', true), ['env_var_name' => 'APP_ENV', 'debug' => false]);
 
         $this->assertSame(3, SwooleRunner::$config['task']['settings']['worker_num']);
-        $this->assertSame(1500, SwooleRunner::$config['task']['settings']['lifetime']);
+        $this->assertSame(1500, SwooleRunner::$config['task']['settings']['max_execution_time']);
         $this->assertSame(300 * 1024 * 1024, TaskSettings::fromRuntime('/app')->maxMemory, 'MAX_MEMORY is in MB');
         $this->assertSame(0, SwooleRunner::$config['http']['settings']['task_worker_num']);
         $this->assertTrue(SwooleRunner::$config['worker']['task']);
