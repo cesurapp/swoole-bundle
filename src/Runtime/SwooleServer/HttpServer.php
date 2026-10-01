@@ -29,8 +29,6 @@ class HttpServer
         // Manager Start
         $this->server->on('request', [$this, 'onRequest']);
         $this->server->on('managerstart', [$this, 'onStart']);
-
-        $GLOBALS['httpServer'] = $this->server;
     }
 
     /**
@@ -112,7 +110,8 @@ class HttpServer
             echo '------------------------------'.PHP_EOL;
             echo 'Host         => '.$this->options['http']['host'].':'.$this->options['http']['port'].PHP_EOL;
             echo 'Http Worker  => True'.sprintf(' (%s Worker)', $this->options['http']['settings']['worker_num']).PHP_EOL;
-            echo 'Task Worker  => '.($this->options['worker']['task'] ? 'True' : 'False').sprintf(' (%s Worker)', $this->options['http']['settings']['task_worker_num']).PHP_EOL;
+            $task = $this->options['task']['settings'] ?? [];
+            echo 'Task Worker  => '.($this->options['worker']['task'] ? 'True' : 'False').sprintf(' (%s Executor x %s Concurrent)', $task['worker_num'] ?? 0, $task['concurrency'] ?? 0).PHP_EOL;
             echo 'Cron Worker  => '.($this->options['worker']['cron'] ? 'True' : 'False').PHP_EOL;
             echo 'Process Worker => '.($this->options['worker']['process'] ? 'True' : 'False').PHP_EOL;
             echo 'Log Level    => '.match ((int) $this->options['http']['settings']['log_level']) {
@@ -127,7 +126,8 @@ class HttpServer
             }.PHP_EOL;
             echo 'Log File     => '.($this->options['http']['settings']['log_file'] ?? 'STDOUT').PHP_EOL;
             echo 'Max Request  => '.($this->options['http']['settings']['max_request'] ?? 0).' Req'.PHP_EOL;
-            echo 'Task Max Req => '.($this->options['http']['settings']['task_max_request'] ?? 0).' Req'.PHP_EOL;
+            echo 'Task Lifetime => '.($task['lifetime'] ?? 0).' sec'.PHP_EOL;
+            echo 'Task Memory  => '.($task['max_memory'] ?? 0).' MB'.PHP_EOL;
             echo 'Max WaitTime => '.($this->options['http']['settings']['max_wait_time'] ?? 30).' sec'.PHP_EOL;
             echo PHP_EOL;
 

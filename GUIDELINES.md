@@ -34,15 +34,21 @@ SERVER_HTTP_SOCK_TYPE=1                   # SWOOLE_SOCK_TCP (default: 1)
 
 # Server Settings
 SERVER_HTTP_SETTINGS_WORKER_NUM=4         # Default: CPU count
-SERVER_HTTP_SETTINGS_TASK_WORKER_NUM=2    # Default: CPU count / 2
 SERVER_HTTP_SETTINGS_LOG_LEVEL=4          # Default: 4 (SWOOLE_LOG_WARNING)
-SERVER_HTTP_SETTINGS_MAX_WAIT_TIME=60     # Default: 60
+SERVER_HTTP_SETTINGS_MAX_WAIT_TIME=60     # Default: 60 (HTTP workers only)
 SERVER_HTTP_SETTINGS_MAX_REQUEST=10000    # Default: 10000
-SERVER_HTTP_SETTINGS_TASK_MAX_REQUEST=1000 # Default: 1000 (0 = unlimited)
 SERVER_HTTP_SETTINGS_PACKAGE_MAX_LENGTH=15728640  # 15MB
 SERVER_HTTP_SETTINGS_HTTP_COMPRESSION=true
 SERVER_HTTP_SETTINGS_HEARTBEAT_CHECK_INTERVAL=5   # Default: 5 (a stop waits for the next check)
 SERVER_HTTP_SETTINGS_HEARTBEAT_IDLE_TIME=180
+
+# Task Workers (section 4)
+SERVER_TASK_SETTINGS_WORKER_NUM=2         # Executors, 0 = off (default: SERVER_HTTP_SETTINGS_TASK_WORKER_NUM, else CPU count / 2)
+SERVER_TASK_SETTINGS_CONCURRENCY=1000     # Tasks an executor runs at once (default: 1000)
+SERVER_TASK_SETTINGS_MAX_MEMORY=200       # MB, start afresh above it after a task, 0 = no limit (default: 200)
+SERVER_TASK_SETTINGS_LIFETIME=600         # Start afresh after it; killed at LIFETIME x 1.2 (default: 600)
+SERVER_TASK_SETTINGS_SHUTDOWN_GRACE=30    # Seconds to finish on a server stop (default: 30)
+SERVER_TASK_SETTINGS_LOG_ROTATE=10000     # queue.log records between rewrites (default: 10000)
 ```
 
 Minimal example:
@@ -72,7 +78,8 @@ bin/console task:failed:clear   # Clear failed tasks (unfinished durable tasks s
 ```
 
 `server:stop` finds the server by `var/swoole.pid` (the server writes it on start) and stops it
-gracefully: running requests end first, for up to `max_wait_time`.
+gracefully: running requests end first, for up to `max_wait_time`, then the task executors finish
+theirs, for up to `shutdown_grace`.
 
 Development vs Production:
 - Use `server:watch` in development (enables file watching and auto-reload)
@@ -171,7 +178,22 @@ class QueueProcess extends AbstractProcessJob
 
 ## 4. Task & Queue Handling
 
-Tasks are asynchronous background jobs dispatched to task workers.
+Tasks are asynchronous background jobs, run by the task executors.
+
+**Task workers:** Swoole's task workers are not used — they share `max_wait_time` with the HTTP
+workers, which cut long tasks off. A **task broker** process takes every dispatched task, writes it to
+`var/queue.log` and hands it to one of `worker_num` **executor** processes, each running up to
+`concurrency` tasks in coroutines. Both are server-managed processes (`addProcess`), out of
+`max_wait_time`'s reach.
+
+- Waiting tasks survive a restart, a crash or a deploy in `var/queue.log` (keep `var/` on a volume).
+- An executor starts afresh after `lifetime` (up to 20% sooner) and once a task leaves it above
+  `max_memory`: it takes no more tasks, finishes the running ones and exits; the server starts a new one.
+- A kernel alarm kills an executor `lifetime × 1.2` seconds after its start, wherever it hangs. That
+  is the longest a task can run (12 minutes by default): raise `lifetime` above the longest task.
+- On a server stop the executors have `shutdown_grace` seconds to finish, after the HTTP workers.
+- A task that dies with its executor (hung, crashed, cut off) does not run again unless it is durable.
+- Keep `memory_limit` at least twice `max_memory` (or -1).
 
 **When to use:**
 - Sending emails
@@ -222,14 +244,14 @@ class OrderController
 }
 ```
 
-**Where a dispatched task runs:** queued to the task workers from HTTP workers, cron and process
-workers. Inside a task worker Swoole refuses `task()`, and when a queue attempt is refused the task
-would be lost — in both cases `dispatch()` runs it inline instead, in the calling process, through
-the same `TaskWorker::handle()` (failures are recorded and retried as usual). In the test
-environment and with `task_sync_mode` every task runs inline.
+**Where a dispatched task runs:** handed to the broker from HTTP workers, cron, process workers and
+tasks alike; `dispatch()` never waits for it. When the broker can't be reached (it is restarting), the
+task is appended to `var/queue.log` instead and the broker picks it up — it never runs in the caller.
+In the test environment and with `task_sync_mode` every task runs inline.
 
-**Durable tasks:** Swoole's task queue lives in memory. A task that is still queued or running when the
-server stops (deploy, crash, SIGKILL) is gone. Pass `durable: true` when the work must survive that:
+**Durable tasks:** Waiting tasks survive in `var/queue.log`, but a task that is running when its
+executor dies (hung, crashed, cut off by a stop) is gone. Pass `durable: true` when the work must
+survive that:
 
 ```php
 $this->taskHandler->dispatch(TranscribeTask::class, ['call_id' => $id], durable: true);
@@ -239,7 +261,7 @@ $this->taskHandler->dispatch(TranscribeTask::class, ['call_id' => $id], durable:
   carries the row's `id` and `attempt`. The worker deletes the row on success. On failure it records
   the error, and `FailedTaskCron` retries the task like any failed one.
 - **Lost runs.** A run handed over longer than `task_redeliver_timeout` ago is taken as lost: its
-  worker was stopped or killed. It is marked `Lost: …` and retried at once (it has waited long
+  executor was stopped or killed. It is marked `Lost: …` and retried at once (it has waited long
   enough), counting as an attempt. Keep the timeout above the longest durable task. After a deploy,
   a killed run comes back within that timeout plus a minute.
 - **At-least-once.** A task can run twice: after a lost run, after a crash between its work and the
@@ -248,16 +270,14 @@ $this->taskHandler->dispatch(TranscribeTask::class, ['call_id' => $id], durable:
 - **Stale runs are fenced.** Every run carries its attempt number, so a run whose lease already ran
   out cannot overwrite the row of a newer one.
 - **Never inline in the caller.** A long task must not take over an HTTP worker or a process. When
-  the task cannot be handed over right away, the row waits for `FailedTaskCron`: Swoole refused it,
-  there is no server (a console command), or the dispatch sits inside an open DB transaction.
-  Inside a transaction a worker could not see the row until commit, and a rollback takes the row
-  along. Inside a task worker the task runs inline with its id, as the pool would run it.
+  the task cannot be handed over right away, the row waits for `FailedTaskCron`: the broker could not
+  be reached, or the dispatch sits inside an open DB transaction. Inside a transaction a worker could
+  not see the row until commit, and a rollback takes the row along.
 - **Sync mode** (`task_sync_mode`, the test environment) runs the task inline and writes no row.
-- **Worker recycling.** A task worker that reaches `task_max_request` stops taking tasks and gives the
-  ones still running `max_wait_time` seconds before it kills them. A durable task that runs longer
-  than `max_wait_time` therefore dies in a recycle as well. Raise `max_wait_time`
-  (`SERVER_HTTP_SETTINGS_MAX_WAIT_TIME`) above the longest one.
-- **No transactions across network calls.** Task workers run coroutines that share one database
+- **Executor recycling.** An executor is killed `lifetime × 1.2` seconds after its start, so a durable
+  task that runs longer dies with it as well. Raise `lifetime` (`SERVER_TASK_SETTINGS_LIFETIME`)
+  above the longest one; `max_wait_time` no longer applies to tasks.
+- **No transactions across network calls.** Executors run coroutines that share one database
   connection, so never keep a transaction open across a network call.
 - **Deploy all instances together.** A release before durable tasks deletes stored rows when it
   retries them.
@@ -471,7 +491,7 @@ echo $client->body;
 
 **Performance constraints:**
 - `max_request` restarts workers after N requests (prevents memory leaks)
-- `task_max_request` restarts task workers after N tasks
+- `lifetime` and `max_memory` restart task executors (the alarm at `lifetime × 1.2` ends a hung one)
 - Heartbeat closes idle connections automatically
 - Process restart delay prevents rapid restart loops
 

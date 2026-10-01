@@ -2,6 +2,10 @@
 
 namespace Cesurapp\SwooleBundle\Tests\Runtime;
 
+use Cesurapp\SwooleBundle\Runtime\SwooleProcess;
+use Cesurapp\SwooleBundle\Task\TaskBrokerClient;
+use Cesurapp\SwooleBundle\Task\TaskSettings;
+use Cesurapp\SwooleBundle\Tests\_App\Task\AcmeTask;
 use Cesurapp\SwooleBundle\Tests\Kernel;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -38,12 +42,18 @@ class ServerCommandTest extends KernelTestCase
         $cmdTester = new CommandTester($cmd);
         $cmdTester->execute(['--detach' => true]);
 
-        // Stop
+        // The task broker takes tasks.
         sleep(2);
+        $settings = TaskSettings::fromRuntime(self::$kernel->getProjectDir());
+        $this->assertTrue(new TaskBrokerClient($settings)->send(['class' => AcmeTask::class, 'payload' => serialize('')]));
+
+        // Stop
         $cmd = $application->find('server:stop');
         $cmdTester = new CommandTester($cmd);
         $cmdTester->execute([]);
         $this->assertStringContainsString('Swoole HTTP Server is Stopped!', $cmdTester->getDisplay());
+        $this->assertStringNotContainsString('was killed', $cmdTester->getDisplay(), 'every process stops in time');
+        $this->assertFileDoesNotExist(SwooleProcess::taskSocket(self::$kernel->getProjectDir()));
         sleep(1);
     }
 }

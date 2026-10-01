@@ -11,8 +11,12 @@ use Cesurapp\SwooleBundle\Cron\CronWorker;
 use Cesurapp\SwooleBundle\Process\ProcessInterface;
 use Cesurapp\SwooleBundle\Process\ProcessWorker;
 use Cesurapp\SwooleBundle\Repository\FailedTaskRepository;
+use Cesurapp\SwooleBundle\Task\TaskBroker;
+use Cesurapp\SwooleBundle\Task\TaskBrokerClient;
+use Cesurapp\SwooleBundle\Task\TaskExecutor;
 use Cesurapp\SwooleBundle\Task\TaskHandler;
 use Cesurapp\SwooleBundle\Task\TaskInterface;
+use Cesurapp\SwooleBundle\Task\TaskSettings;
 use Cesurapp\SwooleBundle\Task\TaskWorker;
 use Symfony\Component\Config\Definition\Configurator\DefinitionConfigurator;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
@@ -79,13 +83,21 @@ class SwooleBundle extends AbstractBundle
                 ->addTag('tasks')
                 ->setLazy(true);
 
-            // The worker is always injected: besides sync mode, it runs a task inline when Swoole
-            // refuses to queue it (inside a task worker, or outside the server's own processes).
-            // The store keeps durable tasks.
+            // The broker and its executors run in the server's own processes (TaskServer); the
+            // client hands them the tasks.
+            $builder->register(TaskSettings::class, TaskSettings::class)
+                ->setFactory([TaskSettings::class, 'fromRuntime'])
+                ->setArguments(['%kernel.project_dir%']);
+            $builder->register(TaskBrokerClient::class, TaskBrokerClient::class)->setAutowired(true);
+            $builder->register(TaskBroker::class, TaskBroker::class)->setAutowired(true)->setPublic(true);
+            $builder->register(TaskExecutor::class, TaskExecutor::class)->setAutowired(true)->setPublic(true);
+
+            // The worker runs the tasks in sync mode. The store keeps durable tasks.
             $builder->register(TaskHandler::class, TaskHandler::class)->setArguments([
                 '$worker' => new Reference(TaskWorker::class),
                 '$sync' => 'test' === $container->env() || (bool) $builder->getParameter('swoole.task_sync_mode'),
                 '$store' => new Reference(FailedTaskRepository::class),
+                '$broker' => new Reference(TaskBrokerClient::class),
             ]);
 
             $services->load('Cesurapp\\SwooleBundle\\Command\\', './Command/Task*.*');

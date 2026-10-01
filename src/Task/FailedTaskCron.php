@@ -4,7 +4,6 @@ namespace Cesurapp\SwooleBundle\Task;
 
 use Cesurapp\SwooleBundle\Cron\AbstractCronJob;
 use Cesurapp\SwooleBundle\Repository\FailedTaskRepository;
-use Swoole\Server;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 
 /**
@@ -20,18 +19,15 @@ class FailedTaskCron extends AbstractCronJob
 
     private const int BATCH_SIZE = 50;
 
-    /** Between two queued tasks: the only brake on a backlog, since the task workers take everything. */
+    /** Between two queued tasks: the only brake on a backlog, since the broker takes everything. */
     private const int PACE_MICROSECONDS = 5000;
 
-    public function __construct(private readonly FailedTaskRepository $store, private readonly ParameterBagInterface $bag)
+    public function __construct(private readonly FailedTaskRepository $store, private readonly ParameterBagInterface $bag, private readonly TaskBrokerClient $broker)
     {
     }
 
     public function __invoke(): void
     {
-        /** @var Server $server */
-        $server = $GLOBALS['httpServer'];
-
         $retries = count($this->bag->get('swoole.task_retry'));
         $timeout = (int) $this->bag->get('swoole.task_redeliver_timeout');
 
@@ -51,14 +47,14 @@ class FailedTaskCron extends AbstractCronJob
                 }
 
                 $attempt = $row['attempt'] + 1;
-                $accepted = $server->task([
+                $accepted = $this->broker->send([
                     'class' => $row['task'],
                     'payload' => $row['payload'],
                     'id' => $row['id'],
                     'attempt' => $attempt,
                 ]);
 
-                // Swoole took nothing: hand the attempt back and leave the rest for the next run.
+                // The broker took nothing: hand the attempt back and leave the rest for the next run.
                 if (false === $accepted) {
                     $this->store->release($row['id'], $attempt);
 

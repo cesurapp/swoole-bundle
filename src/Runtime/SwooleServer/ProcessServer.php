@@ -10,9 +10,9 @@ use Symfony\Component\HttpKernel\HttpKernelInterface;
  * Registers every enabled process job as a server-managed user process (Server::addProcess).
  *
  * Server-managed, not forked beside the server: a process forked before Server::start() is
- * outside the server's own set, so Server::task() is refused in it, and when it dies nothing
- * brings it back. Added through addProcess, a job can dispatch tasks like any worker, and the
- * manager restarts it whenever it exits — ProcessWorker relies on that for lock failover.
+ * outside the server's own set, and when it dies nothing brings it back. Added through
+ * addProcess, the manager restarts a job whenever it exits — ProcessWorker relies on that for
+ * lock failover.
  */
 class ProcessServer
 {

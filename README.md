@@ -52,17 +52,22 @@ SERVER_HTTP_PORT=9090 # Default = 80
 
 # HTTP Server Settings
 #SERVER_HTTP_SETTINGS_WORKER_NUM=2 # Default = CPU Count
-#SERVER_HTTP_SETTINGS_TASK_WORKER_NUM=1 # Default = CPU Count / 2
 #SERVER_HTTP_SETTINGS_ENABLE_STATIC_HANDLER=false # Default = false
 #SERVER_HTTP_SETTINGS_LOG_LEVEL=4 # Details Openswoole\Constant LOG_LEVEL -> Default = 4 (SWOOLE_LOG_WARNING)
-#SERVER_HTTP_SETTINGS_MAX_WAIT_TIME=60 # Default = 60
-#SERVER_HTTP_SETTINGS_TASK_ENABLE_COROUTINE=true # Default = true
-#SERVER_HTTP_SETTINGS_TASK_MAX_REQUEST=1000 # Restart task worker after N tasks, 0 = unlimited -> Default = 1000
+#SERVER_HTTP_SETTINGS_MAX_WAIT_TIME=60 # HTTP workers only, tasks are out of its reach -> Default = 60
 #SERVER_HTTP_SETTINGS_PACKAGE_MAX_LENGTH=15728640 # 15MB -> Default = 15728640
 #SERVER_HTTP_SETTINGS_HTTP_COMPRESSION=true # Default = true
 #SERVER_HTTP_SETTINGS_MAX_REQUEST=10000 # Default = 10000
 #SERVER_HTTP_SETTINGS_HEARTBEAT_CHECK_INTERVAL=5 # A stop waits for the next check -> Default = 5
 #SERVER_HTTP_SETTINGS_HEARTBEAT_IDLE_TIME=180 # Default = 180
+
+# Task Worker Settings (see "Task Workers" below)
+#SERVER_TASK_SETTINGS_WORKER_NUM=2 # Executor processes, 0 = off -> Default = SERVER_HTTP_SETTINGS_TASK_WORKER_NUM if set, else CPU Count / 2
+#SERVER_TASK_SETTINGS_CONCURRENCY=1000 # Tasks an executor runs at once -> Default = 1000
+#SERVER_TASK_SETTINGS_MAX_MEMORY=200 # MB, executor starts afresh above it after a task, 0 = no limit -> Default = 200
+#SERVER_TASK_SETTINGS_LIFETIME=600 # Executor starts afresh after it (up to 20% sooner), killed at LIFETIME x 1.2 -> Default = 600
+#SERVER_TASK_SETTINGS_SHUTDOWN_GRACE=30 # Seconds the executors have to finish on a server stop -> Default = 30
+#SERVER_TASK_SETTINGS_LOG_ROTATE=10000 # queue.log records between two rewrites -> Default = 10000
 ```
 
 ### Server Commands
@@ -84,7 +89,8 @@ bin/console task:failed:view    # Lists failed tasks
 ```
 
 The running server keeps its master process id in `var/swoole.pid`. `server:stop` sends it SIGTERM
-and waits while the running requests end (up to `max_wait_time`), then kills a server still up.
+and waits while the running requests end (up to `max_wait_time`) and the task executors finish
+theirs (up to `SHUTDOWN_GRACE`), then kills a server still up.
 
 ### Create Cron Job
 You can use cron expression for scheduled tasks, or you can use predefined expressions.
@@ -134,6 +140,28 @@ class ExampleCron extends AbstractCronJob
   run's lock lasts `TIMEOUT` plus a minute, so no other server starts the job while it runs
 - Stopping the server stops the runs in progress
 - The job's constructor runs in the scheduler: open connections in `__invoke()`, never earlier
+
+### Task Workers
+Tasks do not run in Swoole's task workers. Swoole has one `max_wait_time` for its HTTP and task
+workers alike, so a long task was cut off with the HTTP workers' limit. They run in processes the
+bundle adds to the server itself (`Server::addProcess`), which Swoole never reloads: `max_wait_time`
+applies to the HTTP workers only.
+
+- **Task broker**, one process: takes every dispatched task without making the caller wait, writes it
+  to `var/queue.log` and hands it to an executor. Waiting tasks survive a restart, a crash or a deploy:
+  the broker reads them back on start. When the broker can't be reached (it is restarting), a task is
+  appended to `var/queue.log` directly and the broker picks it up. In Docker keep `var/` on a volume.
+- **Executors**, `WORKER_NUM` processes: each runs up to `CONCURRENCY` tasks at once, in coroutines.
+  An executor starts afresh after `LIFETIME` seconds, and when a task leaves it above `MAX_MEMORY`:
+  it takes no more tasks, lets the running ones finish and exits, and the server starts a new one.
+- **Hung tasks:** a kernel alarm kills an executor `LIFETIME x 1.2` seconds after its start, wherever
+  it hangs. A task can therefore run for that long at most (12 minutes by default); raise `LIFETIME`
+  for longer ones.
+- **Server stop:** the HTTP workers end first (up to `max_wait_time`), then the executors have
+  `SHUTDOWN_GRACE` seconds to finish their tasks. Waiting tasks stay in `var/queue.log`.
+- A task that dies with its executor (hung, crashed, cut off by a stop) does not run again, unless it
+  is durable.
+- Keep PHP's `memory_limit` at least twice `MAX_MEMORY`, or -1.
 
 ### Create Task (Background Job or Queue)
 Data passed to tasks must be serializable (string, int, bool, array). Objects cannot be serialized directly.
@@ -192,11 +220,11 @@ class ExampleController
 
 Durable Task:
 
-Swoole keeps its task queue in memory, so a task still queued or running when the server stops is lost.
+Waiting tasks survive a restart in `var/queue.log`, but a task that dies with its executor is lost.
 Pass `durable: true` for work that must survive a deploy or a crash. The task is written to the
 `failed_task` store before it is queued, and its row is deleted only once the task succeeds.
 `FailedTaskCron` runs it again after a failure (on the `task_retry` schedule) and after
-`task_redeliver_timeout` if its worker died.
+`task_redeliver_timeout` if its executor died.
 
 ```php
 $this->taskHandler->dispatch(TranscribeTask::class, ['call_id' => $id], durable: true);
@@ -204,9 +232,8 @@ $this->taskHandler->dispatch(TranscribeTask::class, ['call_id' => $id], durable:
 
 - A durable task runs at least once, so make it idempotent.
 - A durable task never runs inline in the caller. When it can't be queued right away it waits for
-  `FailedTaskCron`. That happens when Swoole refuses it, when there is no server (a console
-  command), or when the dispatch is inside an open database transaction, where a worker could not
-  yet see its row.
+  `FailedTaskCron`. That happens when the task broker can't be reached, or when the dispatch is
+  inside an open database transaction, where a worker could not yet see its row.
 - In sync mode (`task_sync_mode`, tests) it runs inline like any other task and writes no row.
 
 ### Create Process Worker

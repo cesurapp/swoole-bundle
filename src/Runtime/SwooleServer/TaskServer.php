@@ -2,38 +2,52 @@
 
 namespace Cesurapp\SwooleBundle\Runtime\SwooleServer;
 
-use Cesurapp\SwooleBundle\Task\TaskWorker;
-use Swoole\Http\Server;
-use Swoole\Server\Task;
+use Cesurapp\SwooleBundle\Task\TaskBroker;
+use Cesurapp\SwooleBundle\Task\TaskExecutor;
+use Swoole\Coroutine;
+use Swoole\Event;
+use Swoole\Process;
+use Swoole\Timer;
 use Symfony\Component\HttpKernel\HttpKernelInterface;
 
+/**
+ * Registers the task broker and the task executors as server-managed processes (Server::addProcess),
+ * in place of Swoole's task workers.
+ *
+ * Swoole has one max_wait_time for its HTTP and task workers alike: a task worker running a long
+ * task was cut off with the HTTP workers' limit. User processes are never reloaded and have no
+ * max_request, so the limit does not reach them; an executor guards itself instead (TaskExecutor).
+ * The manager restarts either process whenever it exits.
+ */
 class TaskServer
 {
-    private TaskWorker $taskWorker;
-
-    public function __construct(
-        private readonly HttpKernelInterface $application,
-        private readonly HttpServer $server,
-        private readonly array $options,
-    ) {
-        if (!$this->options['worker']['task']) {
+    public function __construct(HttpKernelInterface $application, HttpServer $server, array $options)
+    {
+        if (!$options['worker']['task']) {
             return;
         }
 
-        // Init Worker
-        $kernel = clone $this->application;
-        $kernel->boot(); // @phpstan-ignore-line
-        $this->taskWorker = $kernel->getContainer()->get(TaskWorker::class); // @phpstan-ignore-line
+        $server->server->addProcess(new Process(static function () use ($application) {
+            $kernel = clone $application;
+            $kernel->boot(); // @phpstan-ignore-line
 
-        // Add Task Event
-        $this->server->server->on('task', [$this, 'onTask']);
-    }
+            /** @var TaskBroker $broker */
+            $broker = $kernel->getContainer()->get(TaskBroker::class); // @phpstan-ignore-line
+            Process::signal(SIGTERM, static fn () => $broker->stop());
+            $broker->run();
 
-    /**
-     * Handle Task.
-     */
-    public function onTask(Server $server, Task $task): void
-    {
-        $this->taskWorker->handle($task->data);
+            // Its connections' coroutines may still wait: end without Swoole reporting a deadlock.
+            Coroutine::set(['enable_deadlock_check' => false]);
+            Timer::clearAll();
+            Event::exit();
+        }, false, 2, true));
+
+        for ($i = 0; $i < $options['task']['settings']['worker_num']; ++$i) {
+            $server->server->addProcess(new Process(static function () use ($application) {
+                $kernel = clone $application;
+                $kernel->boot(); // @phpstan-ignore-line
+                $kernel->getContainer()->get(TaskExecutor::class)->run(); // @phpstan-ignore-line
+            }, false, 2, true));
+        }
     }
 }

@@ -24,6 +24,25 @@ class SwooleProcess
     }
 
     /**
+     * The task broker's unix socket. A socket path may not be much longer than 100 bytes (104 on
+     * macOS, 108 on Linux); a longer one goes to the temp directory, named after the project.
+     */
+    public static function taskSocket(string $rootDir): string
+    {
+        $path = rtrim($rootDir, '/').'/var/task-broker.sock';
+
+        return strlen($path) <= 100 ? $path : sys_get_temp_dir().'/swoole-task-'.substr(md5($path), 0, 16).'.sock';
+    }
+
+    /**
+     * The task broker's queue: the tasks still waiting survive a restart in it.
+     */
+    public static function taskLog(string $rootDir): string
+    {
+        return rtrim($rootDir, '/').'/var/queue.log';
+    }
+
+    /**
      * Start Server.
      */
     public function start(string $phpBinary, bool $detach = false): bool
@@ -111,8 +130,9 @@ class SwooleProcess
     /**
      * Stop Server.
      *
-     * The server ends its running requests first, for up to max_wait_time seconds. One that is still
-     * up well after that is killed.
+     * The server ends its running requests first, for up to max_wait_time seconds, then gives the
+     * task executors up to shutdown_grace seconds to finish theirs. One that is still up well after
+     * that is killed.
      */
     public function stop(): bool
     {
@@ -123,7 +143,7 @@ class SwooleProcess
         }
 
         posix_kill($pid, SIGTERM);
-        $deadline = time() + (int) ($_ENV['SERVER_HTTP_SETTINGS_MAX_WAIT_TIME'] ?? 60) + 10;
+        $deadline = time() + (int) ($_ENV['SERVER_HTTP_SETTINGS_MAX_WAIT_TIME'] ?? 60) + (int) ($_ENV['SERVER_TASK_SETTINGS_SHUTDOWN_GRACE'] ?? 30) + 15;
         while (posix_kill($pid, 0) && time() < $deadline) {
             pcntl_waitpid($pid, $status, WNOHANG); // collects it, when this process started it
             usleep(100 * 1000);

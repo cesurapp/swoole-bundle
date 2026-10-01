@@ -5,6 +5,7 @@ namespace Cesurapp\SwooleBundle\Tests\Task;
 use Cesurapp\SwooleBundle\Entity\FailedTask;
 use Cesurapp\SwooleBundle\Repository\FailedTaskRepository;
 use Cesurapp\SwooleBundle\Task\FailedTaskCron;
+use Cesurapp\SwooleBundle\Task\TaskBrokerClient;
 use Cesurapp\SwooleBundle\Task\TaskWorker;
 use Cesurapp\SwooleBundle\Tests\_App\Task\AcmeFailedTask;
 use Cesurapp\SwooleBundle\Tests\_App\Task\AcmeTask;
@@ -12,19 +13,19 @@ use Cesurapp\SwooleBundle\Tests\Kernel;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\Tools\SchemaTool;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+use Symfony\Component\DependencyInjection\ParameterBag\ContainerBag;
 
 /**
  * The sweeper over the task store, run directly (not through CronWorker, whose schedule would make
- * the test depend on the minute) against a stand-in server that records what it is given.
+ * the test depend on the minute) against a stand-in broker client that records what it is given.
  */
 class FailedTaskCronTest extends KernelTestCase
 {
-    private mixed $previousServer = null;
+    private ?TaskBrokerClient $broker = null;
 
     protected function setUp(): void
     {
         $_SERVER['KERNEL_CLASS'] = Kernel::class;
-        $this->previousServer = $GLOBALS['httpServer'] ?? null;
 
         $em = self::getContainer()->get('doctrine')->getManager();
         $schemaTool = new SchemaTool($em);
@@ -32,22 +33,12 @@ class FailedTaskCronTest extends KernelTestCase
         $schemaTool->updateSchema($em->getMetadataFactory()->getAllMetadata());
     }
 
-    protected function tearDown(): void
-    {
-        if (null === $this->previousServer) {
-            unset($GLOBALS['httpServer']);
-        } else {
-            $GLOBALS['httpServer'] = $this->previousServer;
-        }
-        parent::tearDown();
-    }
-
     /** A failure is claimed and queued as its next attempt — and stays until that attempt succeeds. */
     public function testFailureIsClaimedAndQueuedNotDeleted(): void
     {
         $this->failOnce(AcmeFailedTask::class);
         $this->retryDelayPasses();
-        $server = $this->server();
+        $broker = $this->broker();
 
         $this->sweep();
 
@@ -57,7 +48,7 @@ class FailedTaskCronTest extends KernelTestCase
             'payload' => serialize('data'),
             'id' => $row->getId()->toRfc4122(),
             'attempt' => 2,
-        ]], $server->queued);
+        ]], $broker->queued);
         $this->assertSame(2, $row->getAttempt());
         $this->assertNotNull($row->getDeliveredAt());
         $this->assertSame('acme task exception', $row->getException());
@@ -67,27 +58,27 @@ class FailedTaskCronTest extends KernelTestCase
     public function testFailureWaitsForItsRetryDelay(): void
     {
         $this->failOnce(AcmeFailedTask::class);
-        $server = $this->server();
+        $broker = $this->broker();
 
         $this->sweep();
 
-        $this->assertSame([], $server->queued);
+        $this->assertSame([], $broker->queued);
         $this->assertEqualsWithDelta(time() + $this->delays()[0], $this->rows()[0]->getAvailableAt()->getTimestamp(), 5);
 
         $this->retryDelayPasses();
         $this->sweep();
 
-        $this->assertCount(1, $server->queued);
+        $this->assertCount(1, $broker->queued);
     }
 
     public function testRunningAttemptIsLeftAlone(): void
     {
         $this->store()->insert(['class' => AcmeTask::class, 'payload' => serialize('data')], 1, new \DateTimeImmutable());
-        $server = $this->server();
+        $broker = $this->broker();
 
         $this->sweep();
 
-        $this->assertSame([], $server->queued);
+        $this->assertSame([], $broker->queued);
         $this->assertSame(1, $this->rows()[0]->getAttempt());
     }
 
@@ -95,23 +86,23 @@ class FailedTaskCronTest extends KernelTestCase
     public function testWaitingDurableTaskIsQueued(): void
     {
         $this->store()->insert(['class' => AcmeTask::class, 'payload' => serialize('data')]);
-        $server = $this->server();
+        $broker = $this->broker();
 
         $this->sweep();
 
-        $this->assertSame(1, $server->queued[0]['attempt']);
+        $this->assertSame(1, $broker->queued[0]['attempt']);
     }
 
     /** An attempt handed over longer ago than task_redeliver_timeout died with its worker. */
     public function testLostAttemptIsMarkedAndQueuedAgain(): void
     {
         $this->store()->insert(['class' => AcmeTask::class, 'payload' => serialize('data')], 1, new \DateTimeImmutable('-2 hours'));
-        $server = $this->server();
+        $broker = $this->broker();
 
         $this->sweep();
 
         $this->assertStringStartsWith('Lost: not finished within 3600 seconds', $this->rows()[0]->getException());
-        $this->assertSame(2, $server->queued[0]['attempt']);
+        $this->assertSame(2, $broker->queued[0]['attempt']);
     }
 
     /** Lost on its last attempt: shown as failed, not run again. */
@@ -119,25 +110,25 @@ class FailedTaskCronTest extends KernelTestCase
     {
         $last = $this->retries() + 1;
         $this->store()->insert(['class' => AcmeTask::class, 'payload' => serialize('data')], $last, new \DateTimeImmutable('-2 hours'));
-        $server = $this->server();
+        $broker = $this->broker();
 
         $this->sweep();
 
-        $this->assertSame([], $server->queued);
+        $this->assertSame([], $broker->queued);
         $this->assertCount(1, $this->store()->failedQuery()->getQuery()->getResult());
     }
 
-    /** Swoole refusing is not an attempt: it is given back, and the run stops asking. */
+    /** The broker refusing is not an attempt: it is given back, and the run stops asking. */
     public function testRefusalGivesTheAttemptBackAndEndsTheRun(): void
     {
         $this->failOnce(AcmeFailedTask::class);
         $this->failOnce(AcmeFailedTask::class);
         $this->retryDelayPasses();
-        $server = $this->server(accepts: false);
+        $broker = $this->broker(accepts: false);
 
         $this->sweep();
 
-        $this->assertSame(1, $server->calls);
+        $this->assertSame(1, $broker->calls);
         foreach ($this->rows() as $row) {
             $this->assertSame(1, $row->getAttempt());
             $this->assertNull($row->getDeliveredAt());
@@ -161,12 +152,12 @@ class FailedTaskCronTest extends KernelTestCase
             $this->failOnce(AcmeFailedTask::class);
         }
         $this->retryDelayPasses();
-        $server = $this->server();
+        $broker = $this->broker();
 
         $this->sweep();
 
-        $this->assertCount(120, $server->queued);
-        $this->assertCount(120, array_unique(array_column($server->queued, 'id')));
+        $this->assertCount(120, $broker->queued);
+        $this->assertCount(120, array_unique(array_column($broker->queued, 'id')));
     }
 
     /** One run plus one retry per task_retry entry, then the row rests in the failed list. */
@@ -178,13 +169,13 @@ class FailedTaskCronTest extends KernelTestCase
 
         do {
             $this->retryDelayPasses();
-            $server = $this->server();
+            $broker = $this->broker();
             $this->sweep();
-            foreach ($server->queued as $request) {
+            foreach ($broker->queued as $request) {
                 $worker->handle($request); // what the task worker does with it
                 ++$runs;
             }
-        } while ([] !== $server->queued);
+        } while ([] !== $broker->queued);
 
         $this->assertSame($this->retries() + 1, $runs);
         $this->assertCount(1, $this->store()->failedQuery()->getQuery()->getResult());
@@ -197,15 +188,16 @@ class FailedTaskCronTest extends KernelTestCase
         $this->store()->insert(['class' => AcmeTask::class, 'payload' => serialize('data')], 1, new \DateTimeImmutable());
 
         $this->assertSame(1, $this->store()->retryFailed());
-        $server = $this->server();
+        $broker = $this->broker();
         $this->sweep();
 
-        $this->assertCount(1, $server->queued);
+        $this->assertCount(1, $broker->queued);
     }
 
     private function sweep(): void
     {
-        self::getContainer()->get(FailedTaskCron::class)();
+        $container = self::getContainer();
+        new FailedTaskCron($container->get(FailedTaskRepository::class), new ContainerBag($container), $this->broker ?? $this->broker())();
     }
 
     /** A first run that fails: the row every retry starts from. */
@@ -252,26 +244,27 @@ class FailedTaskCronTest extends KernelTestCase
         return $em->getRepository(FailedTask::class)->findBy([], ['createdAt' => 'ASC']);
     }
 
-    private function server(bool $accepts = true): object
+    /**
+     * A broker client that records what it is given.
+     */
+    private function broker(bool $accepts = true): TaskBrokerClient
     {
-        return $GLOBALS['httpServer'] = new class ($accepts) {
+        return $this->broker = new class ($accepts) extends TaskBrokerClient {
             public array $queued = [];
             public int $calls = 0;
-            public bool $taskworker = false;
 
             public function __construct(private readonly bool $accepts)
             {
             }
 
-            public function task(array $request): int|false
+            public function send(array $request): bool
             {
                 ++$this->calls;
-                if (!$this->accepts) {
-                    return false;
+                if ($this->accepts) {
+                    $this->queued[] = $request;
                 }
-                $this->queued[] = $request;
 
-                return count($this->queued) - 1;
+                return $this->accepts;
             }
         };
     }
