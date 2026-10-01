@@ -415,7 +415,8 @@ class ApiService
 }
 ```
 
-Autowired `HttpClientInterface` is automatically replaced with `SwooleBridge`.
+Autowired `HttpClientInterface` is automatically replaced with `SwooleBridge`. It works outside the
+server as well (a console command, a test): there each request runs in a coroutine of its own.
 
 **Supported options:**
 
@@ -434,6 +435,8 @@ $client->request('POST', 'https://api.example.com', [
 ```
 
 **Limitations:**
+- Errors do not throw: a failed connection or a timeout shows as a negative status code
+  (`SWOOLE_HTTP_CLIENT_ESTATUS_*`), and a 4xx/5xx response returns its body. Check `getStatusCode()`
 - `stream()` method is not implemented
 - `withOptions()` returns same instance (no-op)
 - Response streaming not supported

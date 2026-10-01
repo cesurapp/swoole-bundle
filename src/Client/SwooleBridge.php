@@ -11,12 +11,18 @@ class SwooleBridge implements HttpClientInterface
 {
     public static ?array $clients = null;
 
+    /**
+     * Applied to every request, set through withOptions().
+     */
+    private array $defaultOptions = [];
+
     public function __construct(private readonly EventDispatcherInterface $eventDispatcher)
     {
     }
 
     public function request(string $method, string $url, array $options = []): ResponseInterface
     {
+        $options = self::mergeOptions($this->defaultOptions, $options);
         $client = SwooleClient::create($url)->setMethod($method)->setOptions($options);
         $extra = $options['extra'] ?? [];
 
@@ -74,7 +80,24 @@ class SwooleBridge implements HttpClientInterface
 
     public function withOptions(array $options): static
     {
-        return $this;
+        $clone = clone $this;
+        $clone->defaultOptions = self::mergeOptions($this->defaultOptions, $options);
+
+        return $clone;
+    }
+
+    /**
+     * The request's options win over the defaults; headers, query and extra are merged key by key.
+     */
+    private static function mergeOptions(array $defaults, array $options): array
+    {
+        foreach (['headers', 'query', 'extra'] as $key) {
+            if (isset($defaults[$key], $options[$key])) {
+                $options[$key] = [...$defaults[$key], ...$options[$key]];
+            }
+        }
+
+        return $options + $defaults;
     }
 
     public function enableTrace(): void

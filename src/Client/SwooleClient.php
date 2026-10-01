@@ -2,8 +2,11 @@
 
 namespace Cesurapp\SwooleBundle\Client;
 
+use Swoole\Coroutine;
 use Swoole\Coroutine\Http\Client;
 use Swoole\Coroutine\Http\Client\Exception;
+use Swoole\Coroutine\Scheduler;
+use Swoole\Runtime;
 
 /**
  * Swoole Coroutine Based Http Client.
@@ -75,36 +78,32 @@ class SwooleClient
         }
 
         $this->client->setMethod('GET');
-        $this->client->execute($this->requestUri);
 
-        return $this->client;
+        return $this->execute();
     }
 
     public function post(string|array $data = []): Client
     {
         $this->client->setMethod('POST');
         $this->setData($data);
-        $this->client->execute($this->requestUri);
 
-        return $this->client;
+        return $this->execute();
     }
 
     public function put(string|array $data = []): Client
     {
         $this->client->setMethod('PUT');
         $this->setData($data);
-        $this->client->execute($this->requestUri);
 
-        return $this->client;
+        return $this->execute();
     }
 
     public function patch(string|array $data = []): Client
     {
         $this->client->setMethod('PATCH');
         $this->setData($data);
-        $this->client->execute($this->requestUri);
 
-        return $this->client;
+        return $this->execute();
     }
 
     public function delete(?array $query = null): Client
@@ -114,9 +113,8 @@ class SwooleClient
         }
 
         $this->client->setMethod('DELETE');
-        $this->client->execute($this->requestUri);
 
-        return $this->client;
+        return $this->execute();
     }
 
     public function setQuery(array $query = [], bool $clearCurrent = false): self
@@ -270,10 +268,23 @@ class SwooleClient
 
     /**
      * Execute Request.
+     *
+     * Outside a coroutine (a console command) Swoole would end the process with a fatal error that
+     * cannot be caught, so the request runs in a coroutine of its own there, with the runtime hooks
+     * left as they are.
      */
     public function execute(): Client
     {
-        $this->client->execute($this->requestUri);
+        if (Coroutine::getCid() > 0) {
+            $this->client->execute($this->requestUri);
+
+            return $this->client;
+        }
+
+        $scheduler = new Scheduler();
+        $scheduler->set(['hook_flags' => Runtime::getHookFlags()]);
+        $scheduler->add(fn () => $this->client->execute($this->requestUri));
+        $scheduler->start();
 
         return $this->client;
     }
