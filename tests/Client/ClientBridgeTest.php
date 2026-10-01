@@ -182,6 +182,189 @@ class ClientBridgeTest extends KernelTestCase
         $scheduler->start();
     }
 
+    public function testClientIdleTimeout(): void
+    {
+        /** @var SwooleBridge $bridge */
+        $bridge = self::getContainer()->get('http_client');
+
+        $scheduler = new Scheduler();
+        $scheduler->add(function () use ($bridge) {
+            // A body that keeps coming runs past the timeout, which only counts the time without data
+            $started = microtime(true);
+            $response = $bridge->request('GET', $this->slowServer(4, 0.3), ['timeout' => 0.5]);
+            $this->assertSame(200, $response->getStatusCode());
+            $this->assertSame(str_repeat('abcdefghij', 2000), $response->getContent());
+            $this->assertGreaterThan(1, microtime(true) - $started);
+            $this->assertArrayNotHasKey('write_func', $response->getInfo('setting'));
+
+            // A pause longer than the timeout ends the request
+            $started = microtime(true);
+            $response = $bridge->request('GET', $this->slowServer(2, 1), ['timeout' => 0.5]);
+            $this->assertSame(SWOOLE_HTTP_CLIENT_ESTATUS_REQUEST_TIMEOUT, $response->getStatusCode());
+            $this->assertLessThan(0.9, microtime(true) - $started);
+
+            // max_duration limits the whole request
+            $started = microtime(true);
+            $response = $bridge->request('GET', $this->slowServer(4, 0.3), ['timeout' => 0.5, 'max_duration' => 0.7]);
+            $this->assertSame(SWOOLE_HTTP_CLIENT_ESTATUS_REQUEST_TIMEOUT, $response->getStatusCode());
+            $this->assertLessThan(1, microtime(true) - $started);
+        });
+        $scheduler->start();
+    }
+
+    public function testClientDefaultTimeout(): void
+    {
+        // As the bundle's http_client_timeout sets it
+        $bridge = new SwooleBridge(self::getContainer()->get('event_dispatcher'), ['timeout' => 0.5]);
+
+        $scheduler = new Scheduler();
+        $scheduler->add(function () use ($bridge) {
+            // Connections wait in the backlog unaccepted, so each request times out
+            $server = new Coroutine\Socket(AF_INET, SOCK_STREAM);
+            $server->bind('127.0.0.1');
+            $server->listen();
+            $url = 'http://127.0.0.1:'.$server->getsockname()['port'];
+
+            $started = microtime(true);
+            $response = $bridge->request('GET', $url, ['timeout' => 1]);
+            $this->assertSame(SWOOLE_HTTP_CLIENT_ESTATUS_REQUEST_TIMEOUT, $response->getStatusCode());
+            $this->assertGreaterThan(0.9, microtime(true) - $started);
+
+            // A request's own timeout does not carry over to the next one
+            $started = microtime(true);
+            $response = $bridge->request('GET', $url);
+            $this->assertSame(SWOOLE_HTTP_CLIENT_ESTATUS_REQUEST_TIMEOUT, $response->getStatusCode());
+            $this->assertLessThan(0.9, microtime(true) - $started);
+
+            $server->close();
+        });
+        $scheduler->start();
+    }
+
+    public function testClientBody(): void
+    {
+        /** @var SwooleBridge $bridge */
+        $bridge = self::getContainer()->get('http_client');
+
+        $scheduler = new Scheduler();
+        $scheduler->add(function () use ($bridge) {
+            $resource = fopen('php://memory', 'r+');
+            fwrite($resource, 'resource body');
+            rewind($resource);
+            $chunks = ['closure ', 'body', ''];
+
+            // Symfony's body types besides a string, sent as one; a Content-Length of the caller's (as
+            // async-aws sets) is not doubled
+            foreach ([
+                'resource body' => $resource,
+                'iterable body' => (static fn () => yield from ['iterable ', 'body'])(),
+                'closure body' => static function (int $size) use (&$chunks): string {
+                    return array_shift($chunks);
+                },
+            ] as $expected => $body) {
+                $requests = new Coroutine\Channel(1);
+                $response = $bridge->request('PUT', $this->recordingServer($requests), [
+                    'body' => $body,
+                    'headers' => ['Content-Length' => (string) strlen($expected)],
+                ]);
+                $this->assertSame(200, $response->getStatusCode());
+
+                $request = $requests->pop(1);
+                $this->assertStringEndsWith("\r\n\r\n".$expected, $request);
+                $this->assertSame(1, substr_count(strtolower($request), 'content-length:'));
+            }
+        });
+        $scheduler->start();
+    }
+
+    public function testClientIdleTimeoutUpload(): void
+    {
+        /** @var SwooleBridge $bridge */
+        $bridge = self::getContainer()->get('http_client');
+        // Beyond the socket buffers, so the upload lasts until the server reads it
+        $body = str_repeat('a', 16 * 1024 * 1024);
+
+        $scheduler = new Scheduler();
+        $scheduler->add(function () use ($bridge, $body) {
+            // The upload and the wait for the response each stay under the timeout, together they don't
+            $started = microtime(true);
+            $response = $bridge->request('PUT', $this->recordingServer(new Coroutine\Channel(1), 0.6, 0.6), ['body' => $body, 'timeout' => 1]);
+            $this->assertSame(200, $response->getStatusCode());
+            $this->assertGreaterThan(1.2, microtime(true) - $started);
+
+            // An upload the server never reads ends with the timeout
+            $server = new Coroutine\Socket(AF_INET, SOCK_STREAM);
+            $server->bind('127.0.0.1');
+            $server->listen();
+
+            $started = microtime(true);
+            $response = $bridge->request('PUT', 'http://127.0.0.1:'.$server->getsockname()['port'], ['body' => $body, 'timeout' => 0.5]);
+            $this->assertSame(SWOOLE_HTTP_CLIENT_ESTATUS_REQUEST_TIMEOUT, $response->getStatusCode());
+            $this->assertLessThan(0.9, microtime(true) - $started);
+
+            $server->close();
+        });
+        $scheduler->start();
+    }
+
+    /**
+     * Serves one request: reads it $readDelay seconds after the connection, answers $replyDelay seconds
+     * after reading it and hands the raw request over $requests.
+     */
+    private function recordingServer(Coroutine\Channel $requests, float $readDelay = 0.001, float $replyDelay = 0.001): string
+    {
+        $server = new Coroutine\Socket(AF_INET, SOCK_STREAM);
+        $server->bind('127.0.0.1');
+        $server->listen();
+
+        Coroutine::create(static function () use ($server, $requests, $readDelay, $replyDelay) {
+            $connection = $server->accept();
+            Coroutine::sleep($readDelay);
+
+            $request = '';
+            while (false === $end = strpos($request, "\r\n\r\n")) {
+                $request .= $connection->recv();
+            }
+            preg_match('/^content-length: *(\d+)/im', substr($request, 0, $end), $length);
+            while (strlen($request) < $end + 4 + (int) ($length[1] ?? 0)) {
+                $request .= $connection->recv(1024 * 1024);
+            }
+
+            Coroutine::sleep($replyDelay);
+            $connection->send("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+            $connection->close();
+            $server->close();
+            $requests->push($request);
+        });
+
+        return 'http://127.0.0.1:'.$server->getsockname()['port'];
+    }
+
+    /**
+     * Serves one request with a gzip body sent in $chunks parts, $gap seconds apart.
+     */
+    private function slowServer(int $chunks, float $gap): string
+    {
+        $server = new Coroutine\Socket(AF_INET, SOCK_STREAM);
+        $server->bind('127.0.0.1');
+        $server->listen();
+
+        Coroutine::create(static function () use ($server, $chunks, $gap) {
+            $connection = $server->accept();
+            $connection->recv();
+            $body = gzencode(str_repeat('abcdefghij', 2000));
+            $connection->send("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: ".strlen($body)."\r\nConnection: close\r\n\r\n");
+            foreach (str_split($body, (int) ceil(strlen($body) / $chunks)) as $part) {
+                Coroutine::sleep($gap);
+                $connection->send($part);
+            }
+            $connection->close();
+            $server->close();
+        });
+
+        return 'http://127.0.0.1:'.$server->getsockname()['port'];
+    }
+
     public function testClientStatic(): void
     {
         $scheduler = new Scheduler();

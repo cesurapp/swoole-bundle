@@ -29,6 +29,8 @@ swoole:
   watch_dir: /config,/src,/templates
   watch_extension: '*.php,*.yaml,*.yml,*.twig'
   replace_http_client: true # Replace Symfony HTTP Client to Swoole Client (checks certificates only with verify_peer: true)
+  http_client_timeout: 10 # Seconds a request may go without receiving data, as Symfony's timeout option; an upload must be sent within it -> Default 10
+  http_client_max_duration: 0 # Seconds a request may take in all, as Symfony's max_duration option (0 for no limit) -> Default 0
   cron_worker: true # Enable Cron Worker Service (FailedTaskCron runs while task_worker is on, even without it)
   task_worker: true # Enable Task Worker Service -> Default false
   task_sync_mode: false # Enable SYNC Mode -> Default false

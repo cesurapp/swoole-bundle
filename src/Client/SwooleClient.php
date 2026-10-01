@@ -3,6 +3,7 @@
 namespace Cesurapp\SwooleBundle\Client;
 
 use Swoole\Coroutine;
+use Swoole\Coroutine\Channel;
 use Swoole\Coroutine\Http\Client;
 use Swoole\Coroutine\Http\Client\Exception;
 use Swoole\Coroutine\Scheduler;
@@ -47,6 +48,11 @@ class SwooleClient
         'http_compression' => true,
         'body_decompression' => true,
     ];
+
+    /**
+     * Seconds the request may go without receiving data, null for no limit.
+     */
+    private ?float $idleTimeout = null;
 
     public function __construct(string $uri)
     {
@@ -221,6 +227,21 @@ class SwooleClient
     }
 
     /**
+     * Seconds the request may go without receiving data, as Symfony's timeout option: connect and the
+     * wait for the response count, a body that keeps coming does not. 0 or less waits without limit.
+     * Uploads count as idle time too, Swoole does not report their progress.
+     */
+    public function setIdleTimeout(float $seconds): self
+    {
+        $this->idleTimeout = $seconds > 0 ? $seconds : null;
+        if (null !== $this->idleTimeout) {
+            $this->client->set(['connect_timeout' => $seconds]);
+        }
+
+        return $this;
+    }
+
+    /**
      * Verifies the server's certificate, and that it is issued for the host. Off by default: without
      * it any certificate is accepted.
      */
@@ -276,17 +297,85 @@ class SwooleClient
     public function execute(): Client
     {
         if (Coroutine::getCid() > 0) {
-            $this->client->execute($this->requestUri);
+            $this->send();
 
             return $this->client;
         }
 
         $scheduler = new Scheduler();
         $scheduler->set(['hook_flags' => Runtime::getHookFlags()]);
-        $scheduler->add(fn () => $this->client->execute($this->requestUri));
+        $scheduler->add(fn () => $this->send());
         $scheduler->start();
 
         return $this->client;
+    }
+
+    /**
+     * With an idle timeout the body comes through write_func, which marks each chunk's arrival, and a
+     * watchdog cancels the request once nothing has come for that long. Swoole leaves the body to
+     * write_func then, so gzip and deflate are inflated here. Swoole does not report an upload's
+     * progress, so the request must be sent within the idle time; the wait for the response counts
+     * from the end of the upload.
+     */
+    private function send(): void
+    {
+        if (null === $idle = $this->idleTimeout) {
+            $this->client->execute($this->requestUri);
+
+            return;
+        }
+
+        // Static closures, so the client holds no reference back to this object
+        $state = (object) ['body' => '', 'lastActivity' => microtime(true), 'inflate' => null];
+        $decompress = (bool) ($this->client->setting['body_decompression'] ?? true);
+        $this->client->set(['write_func' => static function (Client $client, string $chunk) use ($state, $decompress) {
+            $state->lastActivity = microtime(true);
+            $encoding = ['gzip' => ZLIB_ENCODING_GZIP, 'deflate' => ZLIB_ENCODING_DEFLATE][$client->headers['content-encoding'] ?? ''] ?? null;
+            if ($decompress && null !== $encoding) {
+                $state->inflate ??= inflate_init($encoding);
+                $chunk = inflate_add($state->inflate, $chunk);
+            }
+            $state->body .= $chunk;
+
+            return true;
+        }]);
+
+        $done = new Channel(1);
+        $cid = Coroutine::getCid();
+        $timedOut = false;
+        Coroutine::create(static function () use ($done, $state, $idle, $cid, &$timedOut) {
+            // Sleeps until the request ends or the idle time since the last chunk runs out (pop waits
+            // without limit for 0, hence the floor)
+            while (false === $done->pop(max($state->lastActivity + $idle - microtime(true), 0.001))) {
+                if (microtime(true) - $state->lastActivity >= $idle) {
+                    $timedOut = true;
+                    Coroutine::cancel($cid);
+
+                    return;
+                }
+            }
+        });
+
+        // Deferred, so execute() returns once the request is sent and recv() waits for the response
+        $started = microtime(true);
+        $total = (float) ($this->client->setting['timeout'] ?? 0);
+        $this->client->set(['defer' => true]);
+        if ($this->client->execute($this->requestUri)) {
+            $state->lastActivity = microtime(true);
+            // What the upload left of the whole request's time, -1 without a limit
+            $this->client->recv($total > 0 ? max($total - (microtime(true) - $started), 0.001) : -1);
+        }
+        $done->push(true);
+
+        // The closure stays out of getInfo(), which the profiler serializes
+        unset($this->client->setting['write_func']);
+        $this->client->body = $state->body;
+        if ($timedOut) {
+            // Reported as Swoole reports its own timeouts
+            $this->client->statusCode = SWOOLE_HTTP_CLIENT_ESTATUS_REQUEST_TIMEOUT;
+            $this->client->errCode = SOCKET_ETIMEDOUT;
+            $this->client->errMsg = swoole_strerror(SOCKET_ETIMEDOUT);
+        }
     }
 
     /**

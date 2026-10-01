@@ -37,6 +37,10 @@ class SwooleBundle extends AbstractBundle
             ->scalarNode('watch_dir')->defaultValue('/config,/src,/templates')->end()
             ->scalarNode('watch_extension')->defaultValue('*.php,*.yaml,*.yml,*.twig')->end()
             ->booleanNode('replace_http_client')->defaultTrue()->end()
+            // Defaults of the replaced client's timeout and max_duration options, which a request's
+            // own options win over.
+            ->floatNode('http_client_timeout')->defaultValue(10.0)->end()
+            ->floatNode('http_client_max_duration')->defaultValue(0.0)->end()
             ->booleanNode('cron_worker')->defaultTrue()->end()
             ->booleanNode('task_worker')->defaultFalse()->end()
             ->booleanNode('task_sync_mode')->defaultFalse()->end()
@@ -65,7 +69,10 @@ class SwooleBundle extends AbstractBundle
         if ($builder->getParameter('swoole.replace_http_client')) {
             $def = $builder
                 ->register(SwooleBridge::class, SwooleBridge::class)
-                ->setArguments([new Reference('event_dispatcher')])
+                ->setArguments([new Reference('event_dispatcher'), [
+                    'timeout' => $config['http_client_timeout'],
+                    'max_duration' => $config['http_client_max_duration'],
+                ]])
                 ->setDecoratedService('http_client', invalidBehavior: ContainerInterface::IGNORE_ON_INVALID_REFERENCE);
             if ('test' === $container->env()) {
                 $def->setPublic(true);

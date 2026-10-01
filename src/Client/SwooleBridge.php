@@ -12,11 +12,9 @@ class SwooleBridge implements HttpClientInterface
     public static ?array $clients = null;
 
     /**
-     * Applied to every request, set through withOptions().
+     * @param array $defaultOptions applied to every request, as through withOptions()
      */
-    private array $defaultOptions = [];
-
-    public function __construct(private readonly EventDispatcherInterface $eventDispatcher)
+    public function __construct(private readonly EventDispatcherInterface $eventDispatcher, private array $defaultOptions = [])
     {
     }
 
@@ -33,7 +31,7 @@ class SwooleBridge implements HttpClientInterface
             $client->setJsonData($options['json']);
         }
         if (isset($options['body'])) {
-            $client->setData($options['body']);
+            $client->setData(self::readBody($options['body']));
         }
         if (isset($options['query'])) {
             $client->setQuery($options['query']);
@@ -57,10 +55,11 @@ class SwooleBridge implements HttpClientInterface
         if (isset($options['verify_peer'])) {
             $client->setRequiredSsl((bool) $options['verify_peer']);
         }
-        // Symfony's timeout limits idle time, Swoole's the whole request
-        if (isset($options['timeout'])) {
-            $client->setTimeout((float) $options['timeout']);
-        }
+        // As in Symfony: timeout limits the time without data (default_socket_timeout by default),
+        // max_duration the whole request (0 for no limit)
+        $client
+            ->setIdleTimeout((float) ($options['timeout'] ?? ini_get('default_socket_timeout')))
+            ->setTimeout(0 < ($options['max_duration'] ?? 0) ? (float) $options['max_duration'] : -1);
 
         $response = new SwooleResponse($client->execute());
         if (is_array(self::$clients)) {
@@ -98,6 +97,33 @@ class SwooleBridge implements HttpClientInterface
         }
 
         return $options + $defaults;
+    }
+
+    /**
+     * Symfony's body option also takes a resource, an iterable or a closure returning chunks until an
+     * empty one (async-aws sends a file as an iterable). Swoole sends a string, so they are read into one.
+     */
+    private static function readBody(mixed $body): string|array
+    {
+        if (is_string($body) || is_array($body)) {
+            return $body;
+        }
+        if (is_resource($body)) {
+            return stream_get_contents($body);
+        }
+
+        $data = '';
+        if ($body instanceof \Closure) {
+            while ('' !== $chunk = $body(16372)) {
+                $data .= $chunk;
+            }
+        } else {
+            foreach ($body as $chunk) {
+                $data .= $chunk;
+            }
+        }
+
+        return $data;
     }
 
     public function enableTrace(): void
