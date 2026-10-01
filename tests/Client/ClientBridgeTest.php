@@ -124,8 +124,14 @@ class ClientBridgeTest extends KernelTestCase
 
         $scheduler = new Scheduler();
         $scheduler->add(function () use ($bridge) {
-            $this->assertSame(10, SwooleClient::create('http://127.0.0.1')->client->setting['timeout']);
-            $this->assertSame(2.5, SwooleClient::create('http://127.0.0.1')->setTimeout(2.5)->client->setting['timeout']);
+            // A direct client's timeouts reach Swoole as it sends: 10 seconds in all, connecting included
+            $client = SwooleClient::create($this->recordingServer(new Coroutine\Channel(1)));
+            $client->get();
+            $this->assertSame([10.0, 10.0], [$client->client->setting['timeout'], $client->client->setting['connect_timeout']]);
+
+            $client = SwooleClient::create($this->recordingServer(new Coroutine\Channel(1)))->setTimeout(2.5);
+            $client->get();
+            $this->assertSame([2.5, 2.5], [$client->client->setting['timeout'], $client->client->setting['connect_timeout']]);
 
             // Connections wait in the backlog unaccepted, so the request is sent and never answered
             $server = new Coroutine\Socket(AF_INET, SOCK_STREAM);
@@ -139,6 +145,36 @@ class ClientBridgeTest extends KernelTestCase
             $this->assertLessThan(2, microtime(true) - $started);
 
             $server->close();
+        });
+        $scheduler->start();
+    }
+
+    /**
+     * Swoole's `timeout` does not cover the connection, so it gets a limit of its own: the idle timeout,
+     * or the one the caller gives — which nothing the bridge derives overwrites — never more than the
+     * whole request. And Symfony's `timeout` (time without data) never becomes Swoole's `timeout`.
+     */
+    public function testClientConnectTimeout(): void
+    {
+        /** @var SwooleBridge $bridge */
+        $bridge = self::getContainer()->get('http_client');
+
+        $scheduler = new Scheduler();
+        $scheduler->add(function () use ($bridge) {
+            $setting = fn (array $options): array => $bridge->request('GET', $this->recordingServer(new Coroutine\Channel(1)), $options)->getInfo('setting');
+
+            $this->assertSame([-1, 0.5], array_values(array_intersect_key($setting(['timeout' => 0.5]), ['timeout' => 0, 'connect_timeout' => 0])));
+
+            // Symfony's max_connect_duration, and Swoole's own connect_timeout, outlive the idle timeout
+            $this->assertSame(0.3, $setting(['timeout' => 5, 'max_connect_duration' => 0.3])['connect_timeout']);
+            $this->assertSame(0.3, $setting(['timeout' => 5, 'connect_timeout' => 0.3])['connect_timeout']);
+
+            // ... but not the whole request
+            $limited = $setting(['timeout' => 5, 'connect_timeout' => 4, 'max_duration' => 2]);
+            $this->assertSame([2.0, 2.0], [$limited['timeout'], $limited['connect_timeout']]);
+
+            // A Swoole setting the caller gives wins over one the bridge derives (verify_peer's host name)
+            $this->assertSame('example.com', $setting(['verify_peer' => true, 'ssl_host_name' => 'example.com'])['ssl_host_name']);
         });
         $scheduler->start();
     }

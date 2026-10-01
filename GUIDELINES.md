@@ -443,15 +443,26 @@ $client->request('POST', 'https://api.example.com', [
     'verify_peer' => true,                  // Verify the certificate and host name (default: off)
     'proxy' => 'http://user:pass@host:port', // HTTP proxy
     'proxy' => 'socks5://user:pass@host:port', // SOCKS5 proxy
+    'timeout' => 10,                        // Seconds without data, connect included (default: http_client_timeout)
+    'max_duration' => 30,                   // Seconds for the whole request, 0 = no limit (default: http_client_max_duration)
+    'max_connect_duration' => 4,            // Seconds to connect (default: the timeout)
     'extra' => ['custom' => 'data'],        // Custom metadata (for events)
+    'ssl_host_name' => 'api.example.com',   // An option Symfony does not know: a Swoole client setting
 ]);
 ```
+
+An option Symfony does not know is one of Swoole's own client settings (`ssl_host_name`,
+`connect_timeout`, `body_decompression`…) and passes through as it is, after everything the bridge
+derives from Symfony's options: what the caller sets explicitly wins. Swoole's `timeout` does not cover
+connecting (left alone, Swoole waits up to 10 seconds for it), so the connection always gets a limit
+of its own — `max_connect_duration` or Swoole's `connect_timeout`, else the idle `timeout` — never more
+than `max_duration`.
 
 **Limitations:**
 - Errors do not throw: a failed connection or a timeout shows as a negative status code
   (`SWOOLE_HTTP_CLIENT_ESTATUS_*`), and a 4xx/5xx response returns its body. Check `getStatusCode()`
-- `stream()` method is not implemented
-- `withOptions()` returns same instance (no-op)
+- `stream()` yields each response's body as one chunk, once it is complete
+- `withOptions()` returns a copy with the options as its defaults
 - Response streaming not supported
 
 **Direct usage (advanced):**
@@ -465,6 +476,9 @@ $client = SwooleClient::create('https://api.example.com/endpoint')
     ->setJsonData(['key' => 'value'])
     ->setQuery(['filter' => 'active'])
     ->setRequiredSsl()                      // Verify the certificate and host name (default: off)
+    ->setTimeout(10)                        // Seconds for the whole request, connect included (default: 10)
+    ->setConnectTimeout(4)                  // Seconds to connect (default: the idle timeout, else the timeout)
+    ->setIdleTimeout(5)                     // Seconds without data (default: none)
     ->execute();
 
 echo $client->statusCode;

@@ -18,10 +18,23 @@ class SwooleBridge implements HttpClientInterface
     {
     }
 
+    /**
+     * Symfony's options are translated; an option Symfony does not know is one of Swoole's own client
+     * settings (connect_timeout, ssl_host_name, body_decompression…) and goes through as it is, last:
+     * what the caller sets explicitly wins over what the bridge derives from Symfony's options.
+     *
+     * Timeouts, as in Symfony: `timeout` limits the time without data (default_socket_timeout when
+     * unset), `max_duration` the whole request (0 for no limit), `max_connect_duration` the connection
+     * (the idle timeout when unset). Swoole's own `connect_timeout` is honoured the same way.
+     */
     public function request(string $method, string $url, array $options = []): ResponseInterface
     {
         $options = self::mergeOptions($this->defaultOptions, $options);
-        $client = SwooleClient::create($url)->setMethod($method)->setOptions($options);
+        $client = SwooleClient::create($url)
+            ->setMethod($method)
+            ->setIdleTimeout((float) ($options['timeout'] ?? ini_get('default_socket_timeout')))
+            ->setTimeout((float) ($options['max_duration'] ?? 0))
+            ->setConnectTimeout((float) ($options['max_connect_duration'] ?? 0));
         $extra = $options['extra'] ?? [];
 
         if (isset($options['headers'])) {
@@ -55,11 +68,9 @@ class SwooleBridge implements HttpClientInterface
         if (isset($options['verify_peer'])) {
             $client->setRequiredSsl((bool) $options['verify_peer']);
         }
-        // As in Symfony: timeout limits the time without data (default_socket_timeout by default),
-        // max_duration the whole request (0 for no limit)
-        $client
-            ->setIdleTimeout((float) ($options['timeout'] ?? ini_get('default_socket_timeout')))
-            ->setTimeout(0 < ($options['max_duration'] ?? 0) ? (float) $options['max_duration'] : -1);
+
+        // Swoole's own settings, after everything derived from Symfony's options
+        $client->setOptions(array_diff_key($options, HttpClientInterface::OPTIONS_DEFAULTS));
 
         $response = new SwooleResponse($client->execute());
         if (is_array(self::$clients)) {

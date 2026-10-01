@@ -35,12 +35,11 @@ class SwooleClient
     ];
 
     /**
-     * Coroutine Client Options.
+     * Coroutine Client Options. The timeouts are not among them: see applyTimeouts().
      */
     private array $options = [
         'method' => 'GET',
         'reconnect' => 1,
-        'timeout' => 10,
         'defer' => false,
         'keep_alive' => false,
         'websocket_mask' => false,
@@ -48,6 +47,16 @@ class SwooleClient
         'http_compression' => true,
         'body_decompression' => true,
     ];
+
+    /**
+     * Seconds the whole request may take, connect included; null for no limit.
+     */
+    private ?float $timeout = 10.0;
+
+    /**
+     * Seconds the connection may take; null takes the idle timeout.
+     */
+    private ?float $connectTimeout = null;
 
     /**
      * Seconds the request may go without receiving data, null for no limit.
@@ -209,19 +218,43 @@ class SwooleClient
         return $this;
     }
 
+    /**
+     * Swoole's own client settings. Its `timeout` and `connect_timeout` go to setTimeout() and
+     * setConnectTimeout(): the timeouts are written together (applyTimeouts()), so none overwrites another.
+     */
     public function setOptions(array $options): self
     {
+        if (isset($options['timeout'])) {
+            $this->setTimeout((float) $options['timeout']);
+        }
+        if (isset($options['connect_timeout'])) {
+            $this->setConnectTimeout((float) $options['connect_timeout']);
+        }
+        unset($options['timeout'], $options['connect_timeout']);
+
         $this->client->set($options);
 
         return $this;
     }
 
     /**
-     * Seconds the whole request may take, connect and response included (10 by default). -1 waits without limit.
+     * Seconds the whole request may take, connect and response included (10 by default). 0 or less
+     * waits without limit.
      */
     public function setTimeout(float $seconds): self
     {
-        $this->client->set(['timeout' => $seconds]);
+        $this->timeout = $seconds > 0 ? $seconds : null;
+
+        return $this;
+    }
+
+    /**
+     * Seconds the connection may take. Unset, it is the idle timeout: connecting is time without data.
+     * 0 or less unsets it. Never more than setTimeout() allows the whole request.
+     */
+    public function setConnectTimeout(float $seconds): self
+    {
+        $this->connectTimeout = $seconds > 0 ? $seconds : null;
 
         return $this;
     }
@@ -234,9 +267,6 @@ class SwooleClient
     public function setIdleTimeout(float $seconds): self
     {
         $this->idleTimeout = $seconds > 0 ? $seconds : null;
-        if (null !== $this->idleTimeout) {
-            $this->client->set(['connect_timeout' => $seconds]);
-        }
 
         return $this;
     }
@@ -319,6 +349,8 @@ class SwooleClient
      */
     private function send(): void
     {
+        $this->applyTimeouts();
+
         if (null === $idle = $this->idleTimeout) {
             $this->client->execute($this->requestUri);
 
@@ -358,12 +390,11 @@ class SwooleClient
 
         // Deferred, so execute() returns once the request is sent and recv() waits for the response
         $started = microtime(true);
-        $total = (float) ($this->client->setting['timeout'] ?? 0);
         $this->client->set(['defer' => true]);
         if ($this->client->execute($this->requestUri)) {
             $state->lastActivity = microtime(true);
             // What the upload left of the whole request's time, -1 without a limit
-            $this->client->recv($total > 0 ? max($total - (microtime(true) - $started), 0.001) : -1);
+            $this->client->recv(null !== $this->timeout ? max($this->timeout - (microtime(true) - $started), 0.001) : -1);
         }
         $done->push(true);
 
@@ -376,6 +407,23 @@ class SwooleClient
             $this->client->errCode = SOCKET_ETIMEDOUT;
             $this->client->errMsg = swoole_strerror(SOCKET_ETIMEDOUT);
         }
+    }
+
+    /**
+     * Writes the timeouts to Swoole's settings, once, right before the request: the setters only
+     * record them, so whichever order they came in, none overwrites another. Swoole's `timeout` does
+     * not cover the connection — without its own `connect_timeout` Swoole waits up to 10 seconds to
+     * connect, whatever `timeout` says — so the connection gets the one given, else the idle timeout,
+     * and never more than the whole request may take.
+     */
+    private function applyTimeouts(): void
+    {
+        $connect = $this->connectTimeout ?? $this->idleTimeout;
+        if (null !== $this->timeout) {
+            $connect = min($connect ?? $this->timeout, $this->timeout);
+        }
+
+        $this->client->set(['timeout' => $this->timeout ?? -1, ...(null === $connect ? [] : ['connect_timeout' => $connect])]);
     }
 
     /**
