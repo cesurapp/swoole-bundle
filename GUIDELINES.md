@@ -440,7 +440,7 @@ $client->request('POST', 'https://api.example.com', [
     'body' => 'raw body',
     'query' => ['param' => 'value'],
     'auth_bearer' => 'token',               // Bearer token
-    'verify_peer' => true,                  // Verify the certificate and host name (default: off)
+    'verify_peer' => false,                 // Verify the certificate and host name (default: on, as in Symfony)
     'proxy' => 'http://user:pass@host:port', // HTTP proxy
     'proxy' => 'socks5://user:pass@host:port', // SOCKS5 proxy
     'timeout' => 10,                        // Seconds without data, connect included (default: http_client_timeout)

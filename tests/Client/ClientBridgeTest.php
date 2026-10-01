@@ -111,8 +111,10 @@ class ClientBridgeTest extends KernelTestCase
                 $this->assertSame(SWOOLE_ERROR_SSL_VERIFY_FAILED, SwooleClient::create($url)->setRequiredSsl()->get()->errCode);
             }
 
-            // Symfony's own option, through the bridge
-            $this->assertSame(-1, $bridge->request('GET', 'https://wrong.host.badssl.com', ['verify_peer' => true])->getStatusCode());
+            // Through the bridge the certificate is verified unless Symfony's verify_peer turns it off
+            $this->assertSame(-1, $bridge->request('GET', 'https://wrong.host.badssl.com')->getStatusCode());
+            $this->assertSame(-1, $bridge->request('GET', 'https://self-signed.badssl.com')->getStatusCode());
+            $this->assertSame(200, $bridge->request('GET', 'https://self-signed.badssl.com', ['verify_peer' => false])->getStatusCode());
         });
         $scheduler->start();
     }

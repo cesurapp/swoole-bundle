@@ -65,9 +65,8 @@ class SwooleBridge implements HttpClientInterface
         if (isset($options['auth_bearer'])) {
             $client->setHeaders(['Authorization' => 'Bearer '.$options['auth_bearer']]);
         }
-        if (isset($options['verify_peer'])) {
-            $client->setRequiredSsl((bool) $options['verify_peer']);
-        }
+        // On unless turned off, as in Symfony: Swoole alone accepts any certificate
+        $client->setRequiredSsl((bool) ($options['verify_peer'] ?? true));
 
         // Swoole's own settings, after everything derived from Symfony's options
         $client->setOptions(array_diff_key($options, HttpClientInterface::OPTIONS_DEFAULTS));
