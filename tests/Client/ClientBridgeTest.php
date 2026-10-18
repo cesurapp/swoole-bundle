@@ -234,6 +234,7 @@ class ClientBridgeTest extends KernelTestCase
             $this->assertSame(str_repeat('abcdefghij', 2000), $response->getContent());
             $this->assertGreaterThan(1, microtime(true) - $started);
             $this->assertArrayNotHasKey('write_func', $response->getInfo('setting'));
+            $this->assertTrue($response->getInfo('setting')['body_decompression']);
 
             // A pause longer than the timeout ends the request
             $started = microtime(true);

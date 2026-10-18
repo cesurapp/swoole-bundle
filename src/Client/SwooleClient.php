@@ -342,10 +342,11 @@ class SwooleClient
 
     /**
      * With an idle timeout the body comes through write_func, which marks each chunk's arrival, and a
-     * watchdog cancels the request once nothing has come for that long. Swoole leaves the body to
-     * write_func then, so gzip and deflate are inflated here. Swoole does not report an upload's
-     * progress, so the request must be sent within the idle time; the wait for the response counts
-     * from the end of the upload.
+     * watchdog cancels the request once nothing has come for that long. Swoole's own decompression is
+     * off meanwhile, so every chunk reaches write_func as it arrives (since 6.3 Swoole would decode
+     * first and skip the chunks that decode to nothing, which the watchdog would take for silence), and
+     * gzip and deflate are inflated here. Swoole does not report an upload's progress, so the request
+     * must be sent within the idle time; the wait for the response counts from the end of the upload.
      */
     private function send(): void
     {
@@ -360,7 +361,7 @@ class SwooleClient
         // Static closures, so the client holds no reference back to this object
         $state = (object) ['body' => '', 'lastActivity' => microtime(true), 'inflate' => null];
         $decompress = (bool) ($this->client->setting['body_decompression'] ?? true);
-        $this->client->set(['write_func' => static function (Client $client, string $chunk) use ($state, $decompress) {
+        $this->client->set(['body_decompression' => false, 'write_func' => static function (Client $client, string $chunk) use ($state, $decompress) {
             $state->lastActivity = microtime(true);
             $encoding = ['gzip' => ZLIB_ENCODING_GZIP, 'deflate' => ZLIB_ENCODING_DEFLATE][$client->headers['content-encoding'] ?? ''] ?? null;
             if ($decompress && null !== $encoding) {
@@ -398,8 +399,9 @@ class SwooleClient
         }
         $done->push(true);
 
-        // The closure stays out of getInfo(), which the profiler serializes
+        // The closure stays out of getInfo(), which the profiler serializes; the caller's setting comes back
         unset($this->client->setting['write_func']);
+        $this->client->set(['body_decompression' => $decompress]);
         $this->client->body = $state->body;
         if ($timedOut) {
             // Reported as Swoole reports its own timeouts
