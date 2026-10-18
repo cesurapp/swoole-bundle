@@ -203,6 +203,10 @@ class TaskBrokerClientTest extends TaskTestCase
                         while (is_string($frame = $peer->recvPacket(-1)) && '' !== $frame) {
                             $state->frames[] = TaskFrame::decode($frame);
                         }
+
+                        // As TaskBroker::serve(): newer Swoole builds keep a socket closed from another
+                        // coroutine open until its reader closes it too
+                        $peer->close();
                     });
                 }
             }
