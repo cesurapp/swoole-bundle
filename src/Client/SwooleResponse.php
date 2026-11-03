@@ -58,6 +58,11 @@ readonly class SwooleResponse implements ResponseInterface
 
         $info = get_object_vars($this->client);
 
+        // Symfony's names, which its decorators read (AsyncContext, FollowRedirectsTrait).
+        // shortcut: a relative Location fails the request, resolve it against the URL once a server sends one.
+        $info['http_code'] = $info['statusCode'];
+        $info['redirect_url'] = $info['statusCode'] >= 300 && $info['statusCode'] < 400 ? ($info['headers']['location'] ?? null) : null;
+
         if (null === $type) {
             return $info;
         }

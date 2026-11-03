@@ -347,16 +347,47 @@ class ClientBridgeTest extends KernelTestCase
     }
 
     /**
+     * Symfony's decorators read the status and the redirect under Symfony's names (AsyncContext,
+     * FollowRedirectsTrait): without them NoPrivateNetworkHttpClient fails every request.
+     */
+    public function testClientInfoForDecorators(): void
+    {
+        /** @var SwooleBridge $bridge */
+        $bridge = self::getContainer()->get('http_client');
+        $reply = static fn (string $status) => "HTTP/1.1 $status\r\nLocation: https://example.com/a\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+        $scheduler = new Scheduler();
+        $scheduler->add(function () use ($bridge, $reply) {
+            $response = $bridge->request('GET', $this->recordingServer(new Coroutine\Channel(1)));
+            $this->assertSame(200, $response->getInfo('http_code'));
+            $this->assertNull($response->getInfo('redirect_url'));
+
+            $response = $bridge->request('GET', $this->recordingServer(new Coroutine\Channel(1), reply: $reply('302 Found')));
+            $this->assertSame(302, $response->getInfo('http_code'));
+            $this->assertSame('https://example.com/a', $response->getInfo('redirect_url'));
+            $this->assertSame('https://example.com/a', $response->getInfo()['redirect_url']);
+
+            // A Location outside a redirect leads nowhere
+            $response = $bridge->request('GET', $this->recordingServer(new Coroutine\Channel(1), reply: $reply('201 Created')));
+            $this->assertNull($response->getInfo('redirect_url'));
+
+            // A failed connection reports Swoole's negative status
+            $this->assertSame(SWOOLE_HTTP_CLIENT_ESTATUS_CONNECT_FAILED, $bridge->request('GET', 'http://127.0.0.1:1/')->getInfo('http_code'));
+        });
+        $scheduler->start();
+    }
+
+    /**
      * Serves one request: reads it $readDelay seconds after the connection, answers $replyDelay seconds
      * after reading it and hands the raw request over $requests.
      */
-    private function recordingServer(Coroutine\Channel $requests, float $readDelay = 0.001, float $replyDelay = 0.001): string
+    private function recordingServer(Coroutine\Channel $requests, float $readDelay = 0.001, float $replyDelay = 0.001, string $reply = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"): string
     {
         $server = new Coroutine\Socket(AF_INET, SOCK_STREAM);
         $server->bind('127.0.0.1');
         $server->listen();
 
-        Coroutine::create(static function () use ($server, $requests, $readDelay, $replyDelay) {
+        Coroutine::create(static function () use ($server, $requests, $readDelay, $replyDelay, $reply) {
             $connection = $server->accept();
             Coroutine::sleep($readDelay);
 
@@ -370,7 +401,7 @@ class ClientBridgeTest extends KernelTestCase
             }
 
             Coroutine::sleep($replyDelay);
-            $connection->send("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+            $connection->send($reply);
             $connection->close();
             $server->close();
             $requests->push($request);
