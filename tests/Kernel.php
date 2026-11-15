@@ -51,6 +51,7 @@ class Kernel extends BaseKernel
             ],
             'orm' => [
                 'auto_mapping' => true,
+                'use_schema_editor_api' => true, // ORM 4.0's only way; SchemaTool warns without it
             ],
         ]);
 

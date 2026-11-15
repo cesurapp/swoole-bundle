@@ -113,7 +113,7 @@ class FailedTaskRepository extends ServiceEntityRepository
             'payload' => is_string($payload) ? base64_encode($payload) : null, // see FailedTask::$payload
             'exception' => $exception,
             'attempt' => $attempt,
-            'createdAt' => new \DateTime(),
+            'createdAt' => new \DateTimeImmutable(),
             'deliveredAt' => $deliveredAt,
             'availableAt' => $availableAt,
         ] as $field => $value) {

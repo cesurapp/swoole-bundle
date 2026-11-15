@@ -54,8 +54,8 @@ class FailedTask
     #[ORM\Column(type: 'smallint')]
     protected int $attempt = 0;
 
-    #[ORM\Column(type: 'datetime')]
-    private \DateTime $createdAt;
+    #[ORM\Column(type: 'datetime_immutable')]
+    private \DateTimeImmutable $createdAt;
 
     /** When the running attempt was handed to a worker; null while nothing runs it. */
     #[ORM\Column(type: 'datetime_immutable', nullable: true)]
@@ -68,7 +68,7 @@ class FailedTask
     public function __construct()
     {
         $this->id = UuidV7::v7();
-        $this->createdAt = new \DateTime();
+        $this->createdAt = new \DateTimeImmutable();
     }
 
     public function getId(): UuidV7
@@ -132,12 +132,12 @@ class FailedTask
         return $this;
     }
 
-    public function getCreatedAt(): \DateTime
+    public function getCreatedAt(): \DateTimeImmutable
     {
         return $this->createdAt;
     }
 
-    public function setCreatedAt(\DateTime $createdAt): self
+    public function setCreatedAt(\DateTimeImmutable $createdAt): self
     {
         $this->createdAt = $createdAt;
 
