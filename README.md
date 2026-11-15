@@ -51,6 +51,8 @@ SERVER_HTTP_HOST=127.0.0.1 # Default = 0.0.0.0
 SERVER_HTTP_PORT=9090 # Default = 80
 #SERVER_HTTP_MODE=2 # SWOOLE_PROCESS -> Default = 2
 #SERVER_HTTP_SOCK_TYPE=1 # SWOOLE_SOCK_TCP -> Default = 1
+#SERVER_HTTP_SETTINGS_SSL_CERT_FILE=/etc/tls/cert.pem # HTTPS: turns the listener's TLS on (SWOOLE_SSL), requests read as secure -> Default = none (HTTP)
+#SERVER_HTTP_SETTINGS_SSL_KEY_FILE=/etc/tls/key.pem # The certificate's key, PEM
 
 # HTTP Server Settings
 #SERVER_HTTP_SETTINGS_WORKER_NUM=2 # Default = CPU Count

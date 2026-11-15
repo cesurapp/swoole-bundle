@@ -13,7 +13,7 @@ use PHPUnit\Framework\TestCase;
 
 class SwooleRunnerTest extends TestCase
 {
-    private const array ENV = ['SERVER_TASK_SETTINGS_WORKER_NUM', 'SERVER_TASK_SETTINGS_MAX_EXECUTION_TIME', 'SERVER_TASK_SETTINGS_MAX_MEMORY', 'SERVER_HTTP_SETTINGS_TASK_WORKER_NUM'];
+    private const array ENV = ['SERVER_TASK_SETTINGS_WORKER_NUM', 'SERVER_TASK_SETTINGS_MAX_EXECUTION_TIME', 'SERVER_TASK_SETTINGS_MAX_MEMORY', 'SERVER_HTTP_SETTINGS_TASK_WORKER_NUM', 'SERVER_HTTP_SOCK_TYPE', 'SERVER_HTTP_SETTINGS_SSL_CERT_FILE'];
 
     private array $config;
 
@@ -81,6 +81,28 @@ class SwooleRunnerTest extends TestCase
         $_ENV['SERVER_TASK_SETTINGS_WORKER_NUM'] = '2';
         new SwooleRunner(new Kernel('test', true), ['env_var_name' => 'APP_ENV', 'debug' => false]);
         $this->assertSame(2, SwooleRunner::$config['task']['settings']['worker_num']);
+    }
+
+    /** A name keeps its underscores: SERVER_HTTP_SOCK_TYPE reaches sock_type. */
+    public function testSockTypeComesFromTheEnv(): void
+    {
+        $_ENV['SERVER_HTTP_SOCK_TYPE'] = (string) SWOOLE_SOCK_TCP6;
+        new SwooleRunner(new Kernel('test', true), ['env_var_name' => 'APP_ENV', 'debug' => false]);
+
+        $this->assertSame(SWOOLE_SOCK_TCP6, SwooleRunner::$config['http']['sock_type']);
+        $this->assertArrayNotHasKey('sock', SwooleRunner::$config['http']);
+    }
+
+    public function testACertificateTurnsTheListenersTlsOn(): void
+    {
+        new SwooleRunner(new Kernel('test', true), ['env_var_name' => 'APP_ENV', 'debug' => false]);
+        $this->assertSame(SWOOLE_SOCK_TCP, SwooleRunner::$config['http']['sock_type'], 'no certificate, plain HTTP');
+
+        SwooleRunner::$config = $this->config;
+        $_ENV['SERVER_HTTP_SETTINGS_SSL_CERT_FILE'] = '/etc/tls/cert.pem';
+        new SwooleRunner(new Kernel('test', true), ['env_var_name' => 'APP_ENV', 'debug' => false]);
+        $this->assertSame(SWOOLE_SOCK_TCP | SWOOLE_SSL, SwooleRunner::$config['http']['sock_type']);
+        $this->assertSame('/etc/tls/cert.pem', SwooleRunner::$config['http']['settings']['ssl_cert_file']);
     }
 
     public function testNoExecutorsTurnTheTaskWorkerOff(): void

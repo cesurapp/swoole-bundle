@@ -62,6 +62,11 @@ class SwooleRunner implements RunnerInterface
 
         self::$config = $this->replaceRuntimeEnv(self::$config);
 
+        // HTTPS: a certificate turns the listener's TLS on; Swoole wants both the flag and the files.
+        if (!empty(self::$config['http']['settings']['ssl_cert_file'])) {
+            self::$config['http']['sock_type'] = (int) self::$config['http']['sock_type'] | SWOOLE_SSL;
+        }
+
         // Executors: SERVER_TASK_SETTINGS_WORKER_NUM, or the task worker count of old.
         self::$config['task']['settings']['worker_num'] ??= (int) (self::$config['http']['settings']['task_worker_num'] ?? ceil(swoole_cpu_num() / 2));
         self::$config['http']['settings']['task_worker_num'] = 0;
@@ -128,7 +133,9 @@ class SwooleRunner implements RunnerInterface
         };
 
         foreach ($opts as $key => $value) {
-            $this->assignArrayByPath($options, strtolower(preg_replace(['/SERVER_/', '/_/'], ['', '.'], $key, 2)), $parseType($value));
+            // SERVER_{GROUP}_[SETTINGS_]{NAME}: the name keeps its underscores (SERVER_HTTP_SOCK_TYPE → http.sock_type).
+            $path = preg_replace(['/^SERVER_([A-Z]+)_/', '/^([A-Z]+)\.SETTINGS_/'], ['$1.', '$1.SETTINGS.'], $key);
+            $this->assignArrayByPath($options, strtolower($path), $parseType($value));
         }
 
         return $options;

@@ -57,6 +57,10 @@ class HttpServer
                 $server['HTTP_'.$key] = $value;
             }
         }
+        // The listener's own TLS: secure, as PHP-FPM's HTTPS=on tells Symfony.
+        if ((int) $this->options['http']['sock_type'] & SWOOLE_SSL) {
+            $server['HTTPS'] = 'on';
+        }
 
         return new SymfonyRequest(
             $request->get ?? [],
