@@ -50,17 +50,17 @@ class SwooleBridge implements HttpClientInterface
             $client->setQuery($options['query']);
         }
         if (isset($options['proxy']) && is_string($options['proxy'])) {
-            $parsed = parse_url($options['proxy']);
+            $proxy = parse_url($options['proxy']) ?: [];
+            $user = isset($proxy['user']) ? rawurldecode($proxy['user']) : null;
+            $pass = isset($proxy['pass']) ? rawurldecode($proxy['pass']) : null;
 
-            // Socket5
-            if ('socks5' === $parsed['scheme']) {
-                $client->setSock5Proxy($parsed['host'], $parsed['port'], $parsed['user'] ?? null, $parsed['pass'] ?? null);
-            }
-
-            // HTTP
-            if ('http' === $parsed['scheme']) {
-                $client->setProxy($parsed['host'], $parsed['port'], $parsed['user'] ?? null, $parsed['pass'] ?? null);
-            }
+            // A proxy it cannot speak to is an error, never a request leaving without it
+            match (strtolower($proxy['scheme'] ?? '')) {
+                'http' => $client->setProxy($proxy['host'], $proxy['port'], $user, $pass),
+                'https' => $client->setHttpsProxy($proxy['host'], $proxy['port'] ?? 443, $user, $pass),
+                'socks5' => $client->setSock5Proxy($proxy['host'], $proxy['port'], $user, $pass),
+                default => throw new \InvalidArgumentException(sprintf('Unsupported proxy scheme "%s" (http, https or socks5).', $proxy['scheme'] ?? '')),
+            };
         }
         if (isset($options['auth_bearer'])) {
             $client->setHeaders(['Authorization' => 'Bearer '.$options['auth_bearer']]);

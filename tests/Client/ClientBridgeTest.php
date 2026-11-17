@@ -6,15 +6,26 @@ use Cesurapp\SwooleBundle\Client\SwooleBridge;
 use Cesurapp\SwooleBundle\Client\SwooleClient;
 use Cesurapp\SwooleBundle\Tests\Kernel;
 use Swoole\Coroutine;
+use Swoole\Coroutine\Http\Client;
 use Swoole\Coroutine\Scheduler;
 use Swoole\Runtime;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 
 class ClientBridgeTest extends KernelTestCase
 {
+    /** Files a test wrote, removed after it. */
+    private array $files = [];
+
     protected function setUp(): void
     {
         $_SERVER['KERNEL_CLASS'] = Kernel::class;
+    }
+
+    protected function tearDown(): void
+    {
+        array_map(unlink(...), $this->files);
+        $this->files = [];
+        parent::tearDown();
     }
 
     public function testBrideClientDecorate(): void
@@ -375,6 +386,151 @@ class ClientBridgeTest extends KernelTestCase
             $this->assertSame(SWOOLE_HTTP_CLIENT_ESTATUS_CONNECT_FAILED, $bridge->request('GET', 'http://127.0.0.1:1/')->getInfo('http_code'));
         });
         $scheduler->start();
+    }
+
+    /**
+     * An https proxy (TLS to the proxy itself), which Swoole's client cannot speak, takes the request through
+     * libcurl, and the response reads as Swoole's own. libcurl waits as a coroutine under SWOOLE_HOOK_NATIVE_CURL,
+     * as the server's runtime sets it: the proxy and the servers here share this process.
+     */
+    public function testClientHttpsProxy(): void
+    {
+        /** @var SwooleBridge $bridge */
+        $bridge = self::getContainer()->get('http_client');
+
+        $scheduler = new Scheduler();
+        $scheduler->set(['hook_flags' => SWOOLE_HOOK_NATIVE_CURL]);
+        $scheduler->add(function () use ($bridge) {
+            Coroutine::set(['log_level' => SWOOLE_LOG_ERROR]); // the refused handshake logs a warning
+            $tunnels = new Coroutine\Channel(8);
+            $server = $this->httpsProxy($tunnels, 'Basic '.base64_encode('user:p@ss'));
+            // The credentials are decoded from the URL
+            $proxy = 'https://user:p%40ss@127.0.0.1:'.$server->port;
+
+            // The request as the caller made it, through a tunnel to the URL's address
+            $requests = new Coroutine\Channel(1);
+            $target = $this->recordingServer($requests, reply: "HTTP/1.1 201 Created\r\nX-Reply: yes\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+            $response = $bridge->request('POST', $target.'/path?a=1', ['proxy' => $proxy, 'verify_peer' => false, 'body' => 'hello', 'headers' => ['x-a' => '1']]);
+            $this->assertSame(201, $response->getStatusCode());
+            $this->assertSame('ok', $response->getContent());
+            $this->assertSame(['yes'], $response->getHeaders()['x-reply']);
+            $this->assertSame(['CONNECT '.substr($target, 7).' HTTP/1.1', 'Basic '.base64_encode('user:p@ss')], $tunnels->pop(1));
+            $request = $requests->pop(1);
+            $this->assertStringStartsWith("POST /path?a=1 HTTP/1.1\r\n", $request);
+            $this->assertStringContainsString("\r\nx-a: 1\r\n", $request);
+            $this->assertStringEndsWith("\r\n\r\nhello", $request);
+
+            // An address the caller resolved: the tunnel goes to it, ssl_host_name names the server
+            $requests = new Coroutine\Channel(1);
+            $target = $this->recordingServer($requests);
+            $port = parse_url($target, PHP_URL_PORT);
+            $response = $bridge->request('GET', $target, ['proxy' => $proxy, 'verify_peer' => false, 'ssl_host_name' => 'example.test']);
+            $this->assertSame(200, $response->getStatusCode());
+            $this->assertSame('CONNECT 127.0.0.1:'.$port.' HTTP/1.1', $tunnels->pop(1)[0]);
+            $this->assertStringContainsString("\r\nHost: example.test:".$port."\r\n", $requests->pop(1));
+
+            // A write_func that closes the client ends the read, as it does Swoole's
+            $read = 0;
+            $body = str_repeat('x', 300000);
+            $response = $bridge->request('GET', $this->recordingServer(new Coroutine\Channel(1), reply: "HTTP/1.1 200 OK\r\nContent-Length: 300000\r\nConnection: close\r\n\r\n".$body), [
+                'proxy' => $proxy,
+                'verify_peer' => false,
+                'write_func' => static function (Client $client, string $chunk) use (&$read) {
+                    $read += strlen($chunk);
+                    $client->close();
+                },
+            ]);
+            $tunnels->pop(1);
+            $this->assertSame(SWOOLE_HTTP_CLIENT_ESTATUS_SERVER_RESET, $response->getStatusCode());
+            $this->assertSame('', $response->getContent());
+            $this->assertGreaterThan(0, $read);
+            $this->assertLessThan(strlen($body), $read);
+
+            // max_duration ends a request never answered (the server's backlog takes the connection)
+            $silent = new Coroutine\Socket(AF_INET, SOCK_STREAM);
+            $silent->bind('127.0.0.1');
+            $silent->listen();
+            $started = microtime(true);
+            $response = $bridge->request('GET', 'http://127.0.0.1:'.$silent->getsockname()['port'], ['proxy' => $proxy, 'verify_peer' => false, 'max_duration' => 0.5]);
+            $tunnels->pop(1);
+            $this->assertSame(SWOOLE_HTTP_CLIENT_ESTATUS_REQUEST_TIMEOUT, $response->getStatusCode());
+            $this->assertLessThan(2, microtime(true) - $started);
+            $silent->close();
+
+            // Refused credentials, and a proxy certificate that does not verify, fail as a connection does
+            $response = $bridge->request('GET', 'http://127.0.0.1:1/', ['proxy' => 'https://user:wrong@127.0.0.1:'.$server->port, 'verify_peer' => false]);
+            $this->assertSame(SWOOLE_HTTP_CLIENT_ESTATUS_CONNECT_FAILED, $response->getStatusCode());
+            $this->assertStringContainsString('407', $response->getInfo('errMsg'));
+            $this->assertSame('Basic '.base64_encode('user:wrong'), $tunnels->pop(1)[1]);
+            $this->assertSame(SWOOLE_HTTP_CLIENT_ESTATUS_CONNECT_FAILED, $bridge->request('GET', 'http://127.0.0.1:1/', ['proxy' => $proxy])->getStatusCode());
+
+            $server->shutdown();
+        });
+        $scheduler->start();
+    }
+
+    public function testClientUnsupportedProxy(): void
+    {
+        /** @var SwooleBridge $bridge */
+        $bridge = self::getContainer()->get('http_client');
+
+        // An error, never a request leaving without the proxy it was given
+        $this->expectException(\InvalidArgumentException::class);
+        $bridge->request('GET', 'http://127.0.0.1:1/', ['proxy' => 'socks4://127.0.0.1:1080']);
+    }
+
+    /**
+     * An https proxy with a self-signed certificate: a tunnel for a CONNECT whose Proxy-Authorization is
+     * $authorization (407 otherwise), each CONNECT's request line and authorization handed over $tunnels.
+     */
+    private function httpsProxy(Coroutine\Channel $tunnels, string $authorization): Coroutine\Server
+    {
+        $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
+        $this->files[] = $certificate = (string) tempnam(sys_get_temp_dir(), 'proxy-crt');
+        $this->files[] = $keyFile = (string) tempnam(sys_get_temp_dir(), 'proxy-key');
+        openssl_x509_export_to_file(openssl_csr_sign(openssl_csr_new(['commonName' => 'proxy.test'], $key), null, $key, 1), $certificate);
+        openssl_pkey_export_to_file($key, $keyFile);
+
+        $server = new Coroutine\Server('127.0.0.1', 0, true);
+        $server->set(['ssl_cert_file' => $certificate, 'ssl_key_file' => $keyFile]);
+        $server->handle(static function (Coroutine\Server\Connection $connection) use ($tunnels, $authorization) {
+            $head = '';
+            while (false === strpos($head, "\r\n\r\n")) {
+                if (in_array($data = $connection->recv(5), ['', false], true)) {
+                    $connection->close();
+
+                    return;
+                }
+                $head .= $data;
+            }
+            $line = (string) strtok($head, "\r\n");
+            preg_match('/^proxy-authorization: *(.+?)\r$/im', $head, $given);
+            $tunnels->push([$line, $given[1] ?? null]);
+            if (($given[1] ?? null) !== $authorization) {
+                $connection->send("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n");
+                $connection->close();
+
+                return;
+            }
+
+            [$host, $port] = explode(':', explode(' ', $line)[1]);
+            $upstream = new Coroutine\Client(SWOOLE_SOCK_TCP);
+            $upstream->connect($host, (int) $port, 5);
+            $connection->send("HTTP/1.1 200 Connection established\r\n\r\n");
+            Coroutine::create(static function () use ($connection, $upstream) {
+                while (!in_array($data = $upstream->recv(-1), ['', false], true)) {
+                    $connection->send($data);
+                }
+                $connection->close();
+            });
+            while (!in_array($data = $connection->recv(-1), ['', false], true)) {
+                $upstream->send($data);
+            }
+            $upstream->close();
+        });
+        Coroutine::create(static fn () => $server->start());
+
+        return $server;
     }
 
     /**
