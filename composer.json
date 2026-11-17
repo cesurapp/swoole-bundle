@@ -36,9 +36,6 @@
         "doctrine/doctrine-bundle": "^3.4",
         "phpunit/phpunit": "^13.3"
     },
-    "suggest": {
-        "ext-curl": "An https proxy (the HTTP client's proxy option) goes through libcurl"
-    },
     "autoload": {
         "psr-4": {
             "Cesurapp\\SwooleBundle\\": "src/"

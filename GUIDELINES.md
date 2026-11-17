@@ -445,7 +445,6 @@ $client->request('POST', 'https://api.example.com', [
     'auth_bearer' => 'token',               // Bearer token
     'verify_peer' => false,                 // Verify the certificate and host name (default: on, as in Symfony)
     'proxy' => 'http://user:pass@host:port', // HTTP proxy
-    'proxy' => 'https://user:pass@host:port', // HTTPS proxy (TLS to the proxy), through libcurl
     'proxy' => 'socks5://user:pass@host:port', // SOCKS5 proxy
     'timeout' => 10,                        // Seconds without data, connect included (default: http_client_timeout)
     'max_duration' => 30,                   // Seconds for the whole request, 0 = no limit (default: http_client_max_duration)
@@ -461,17 +460,6 @@ derives from Symfony's options: what the caller sets explicitly wins. Swoole's `
 connecting (left alone, Swoole waits up to 10 seconds for it), so the connection always gets a limit
 of its own — `max_connect_duration` or Swoole's `connect_timeout`, else the idle `timeout` — never more
 than `max_duration`.
-
-An `https` proxy — TLS to the proxy itself, which Swoole's client cannot speak — takes the request
-through libcurl (`ext-curl`; it waits as a coroutine under `SWOOLE_HOOK_NATIVE_CURL`, which the
-server's runtime sets), always through a CONNECT tunnel, and the response reads as Swoole's: the same
-negative statuses, `errMsg` libcurl's message. `ssl_verify_peer` and `ssl_cafile` cover the proxy's
-certificate too; an `ssl_host_name` other than the URL's host keeps the tunnel on the URL's address
-(one the caller resolved) and names the server for SNI, the certificate and Host; a `write_func` takes
-the body, and closing the client in it ends the read. There the idle `timeout` counts whole seconds,
-a file upload cannot go through, and the response's cookies stay in its headers (Swoole's `cookies`
-is not filled). A proxy's user and password are URL-decoded; a scheme other than
-`http`, `https` and `socks5` throws, never sending the request without its proxy.
 
 **Limitations:**
 - Errors do not throw: a failed connection or a timeout shows as a negative status code
